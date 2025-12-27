@@ -23,7 +23,50 @@ const LOCATION_CATEGORIES = [
 // 大洲列表，用于地理分散
 const CONTINENTS = ['亚洲', '欧洲', '非洲', '北美洲', '南美洲', '大洋洲', '南极洲']
 
-function getRandomPromptHints(): { category: string; continent: string; avoidCountries: string } {
+/**
+ * 根据当前 UTC 时间，计算正处于日出时段（当地时间约 5:00-7:00）的时区范围
+ * 返回 UTC 偏移量范围，例如 "UTC+5 到 UTC+7"
+ */
+function getSunriseTimezoneHint(): { utcOffsetRange: string; regionHint: string } {
+  const now = new Date()
+  const utcHour = now.getUTCHours()
+
+  // 日出大约在当地时间 6:00（我们取 5:00-7:00 的范围）
+  // 如果当地时间是 6:00，那么 UTC 偏移 = 当地时间 - UTC 时间 = 6 - utcHour
+  const targetLocalHour = 6
+  const idealOffset = targetLocalHour - utcHour
+
+  // 标准化到 -12 到 +14 范围
+  const normalizeOffset = (offset: number) => {
+    if (offset < -12) return offset + 24
+    if (offset > 14) return offset - 24
+    return offset
+  }
+
+  const minOffset = normalizeOffset(idealOffset - 1)
+  const maxOffset = normalizeOffset(idealOffset + 1)
+
+  // 根据偏移量给出大致地区提示
+  const getRegionByOffset = (offset: number): string => {
+    if (offset >= 9 && offset <= 12) return '东亚、澳大利亚东部、太平洋岛屿'
+    if (offset >= 5 && offset <= 8) return '南亚、东南亚、中亚'
+    if (offset >= 2 && offset <= 4) return '中东、东欧、东非'
+    if (offset >= -1 && offset <= 1) return '西欧、西非'
+    if (offset >= -5 && offset <= -2) return '南美洲东部、大西洋'
+    if (offset >= -8 && offset <= -6) return '北美洲西部、太平洋东部'
+    if (offset >= -12 && offset <= -9) return '太平洋中部、夏威夷、阿拉斯加'
+    return '全球各地'
+  }
+
+  const formatOffset = (offset: number) => offset >= 0 ? `UTC+${offset}` : `UTC${offset}`
+
+  return {
+    utcOffsetRange: `${formatOffset(minOffset)} 到 ${formatOffset(maxOffset)}`,
+    regionHint: getRegionByOffset(idealOffset)
+  }
+}
+
+function getRandomPromptHints(): { category: string; continent: string; avoidCountries: string; sunriseHint: { utcOffsetRange: string; regionHint: string } } {
   const category = LOCATION_CATEGORIES[Math.floor(Math.random() * LOCATION_CATEGORIES.length)]
   const continent = CONTINENTS[Math.floor(Math.random() * CONTINENTS.length)]
 
@@ -32,7 +75,10 @@ function getRandomPromptHints(): { category: string; continent: string; avoidCou
   const shuffled = hotCountries.sort(() => Math.random() - 0.5)
   const avoidCountries = shuffled.slice(0, 3 + Math.floor(Math.random() * 4)).join('、')
 
-  return { category, continent, avoidCountries }
+  // 获取当前日出时区提示
+  const sunriseHint = getSunriseTimezoneHint()
+
+  return { category, continent, avoidCountries, sunriseHint }
 }
 
 const LOCATION_GENERATION_PROMPT = `你是一位资深旅行探险家，专门发掘世界各地的独特目的地。
@@ -81,9 +127,14 @@ export async function generateLocationWithLLM(
 
     // 生成随机提示增加多样性
     const hints = getRandomPromptHints()
-    let userPrompt = `请生成一个位于【${hints.continent}】的【${hints.category}】类型的旅游目的地。
+    let userPrompt = `请生成一个【${hints.category}】类型的旅游目的地。
 
-特别要求：这次请避开 ${hints.avoidCountries} 这些热门国家，选择一个更独特、更少人知道的地方。要求这个地方在地理位置或文化上具有独特性。`
+🌅 时区要求（重要）：当前 UTC 时间是 ${new Date().getUTCHours()}:${String(new Date().getUTCMinutes()).padStart(2, '0')}，请选择一个正处于日出时段（当地时间约 5:00-7:00）的地点。
+符合条件的时区范围大约是 ${hints.sunriseHint.utcOffsetRange}，对应地区包括：${hints.sunriseHint.regionHint}。
+
+如果上述地区没有合适的【${hints.category}】类型目的地，可以适当放宽到邻近时区，但优先选择正在迎接日出的地方。
+
+特别要求：请避开 ${hints.avoidCountries} 这些热门国家，选择一个更独特、更少人知道的地方。要求这个地方在地理位置或文化上具有独特性。`
 
     if (config.llmLocationCustomContext) {
       userPrompt += `\n\n此外，请参考以下用户提供的偏好或上下文：${config.llmLocationCustomContext}`
@@ -91,7 +142,7 @@ export async function generateLocationWithLLM(
 
     userPrompt += `\n\n直接输出JSON，不要有任何其他文字。`
 
-    if (config.debug) ctx.logger('pig').debug(`Location prompt hints: ${hints.continent}, ${hints.category}`)
+    if (config.debug) ctx.logger('pig').debug(`Location prompt hints: sunrise=${hints.sunriseHint.regionHint}, category=${hints.category}`)
 
     const messages = [
       new SystemMessage(LOCATION_GENERATION_PROMPT),
