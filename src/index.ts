@@ -175,15 +175,17 @@ export function apply(ctx: Context, config: Config) {
           const platform = session.platform
           const userId = session.userId
 
+          let avatarUrl = session.author?.avatar || ''
+
+          // 处理 QQ 头像 - onebot 或 qq 平台
+          if (!avatarUrl && (platform === 'onebot' || platform === 'qq' || platform.includes('qq'))) {
+            avatarUrl = `https://q.qlogo.cn/headimg_dl?dst_uin=${userId}&spec=640`
+          }
+
           const userInfo: UserInfo = {
             userId,
             username: session.author?.nickname || session.author?.name || session.username || userId,
-            avatarUrl: session.author?.avatar || ''
-          }
-
-          // 处理 QQ 头像
-          if (platform === 'onebot' && !userInfo.avatarUrl) {
-            userInfo.avatarUrl = `https://q.qlogo.cn/headimg_dl?dst_uin=${userId}&spec=640`
+            avatarUrl
           }
 
           const summaryData = await prepareMonthlySummary(

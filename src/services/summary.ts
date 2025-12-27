@@ -116,7 +116,31 @@ export async function generateMonthlySummaryCard(
   config: Config,
   data: MonthlySummaryData
 ): Promise<SummaryCardResult> {
-  const { year, month, logs, username, avatarUrl, totalTrips, countriesVisited, locationsVisited } = data
+  const { year, month, logs, username, totalTrips, countriesVisited, locationsVisited } = data
+  let { avatarUrl } = data
+
+  // 预取头像并转换为 base64（解决 QQ 头像跨域问题）
+  if (avatarUrl && avatarUrl.startsWith('http')) {
+    try {
+      if (config.debug) ctx.logger('pig').debug(`Fetching avatar: ${avatarUrl}`)
+      const response = await ctx.http(avatarUrl, {
+        responseType: 'arraybuffer',
+        timeout: 5000,
+        headers: {
+          'User-Agent': 'Mozilla/5.0',
+          'Accept': 'image/*',
+        },
+      })
+      const buffer = Buffer.from(response.data as ArrayBuffer)
+      const contentType = response.headers?.get?.('content-type') || 'image/jpeg'
+      avatarUrl = `data:${contentType};base64,${buffer.toString('base64')}`
+      if (config.debug) ctx.logger('pig').debug(`Avatar fetched successfully, size: ${buffer.length}`)
+    } catch (e) {
+      if (config.debug) ctx.logger('pig').warn(`Failed to fetch avatar: ${e}`)
+      // 使用默认头像
+      avatarUrl = ''
+    }
+  }
 
   // 月份名称
   const monthNames = ['一月', '二月', '三月', '四月', '五月', '六月', '七月', '八月', '九月', '十月', '十一月', '十二月']
