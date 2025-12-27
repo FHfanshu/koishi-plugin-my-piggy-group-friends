@@ -163,6 +163,7 @@ export async function generateFootprintCard(
   const now = new Date()
   const dateStr = `${now.getFullYear()}年${now.getMonth() + 1}月${now.getDate()}日`
 
+  const bgCssValue = bgImage ? `url("${bgImage}")` : 'none'
   const html = `
 <!DOCTYPE html>
 <html>
@@ -183,7 +184,7 @@ export async function generateFootprintCard(
     /* Default emoji font set to Noto Color Emoji to maintain layout consistency */
     font-family: "Noto Sans CJK SC", "Noto Sans SC", "Source Han Sans SC", "Microsoft YaHei", "WenQuanYi Micro Hei", "Droid Sans Fallback", "PingFang SC", -apple-system, BlinkMacSystemFont, "Segoe UI", "Roboto", "Helvetica Neue", Arial, sans-serif, "Noto Color Emoji", "Apple Color Emoji", "Segoe UI Emoji";
     background: #f0f0f2;
-    --bg-image: url('${bgImage}');
+    --bg-image: ${bgCssValue};
   }
 
   /* Specific class for the pig emoji to use Twemoji */
@@ -206,10 +207,9 @@ export async function generateFootprintCard(
     inset: 0;
     width: 100%;
     height: 100%;
+    display: block;
+    object-fit: cover;
     background-color: #d1d1d6;
-    background-image: var(--bg-image);
-    background-size: cover;
-    background-position: center;
     z-index: 0;
   }
 
@@ -457,7 +457,7 @@ export async function generateFootprintCard(
 </head>
 <body>
   <div class="wrapper">
-    <div class="bg-image"></div>
+    <img class="bg-image" src="${bgImage || ''}" alt="" />
     <div class="bg-overlay"></div>
 
     <div class="card-container">

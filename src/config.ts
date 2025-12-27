@@ -18,6 +18,8 @@ export interface Config {
   llmLocationModel: string
   // Unsplash API
   unsplashAccessKey: string
+  // Pexels API
+  pexelsApiKey: string
   // Background fetch behavior
   backgroundFetchMode: 'auto' | 'always' | 'never'
   backgroundFetchTimeoutMs: number
@@ -38,7 +40,8 @@ export const Config: Schema<Config> = Schema.intersect([
   Schema.object({
     llmLocationEnabled: Schema.boolean().default(false).description('启用后使用 LLM 动态生成全球旅行地点，关闭则使用预设地点库'),
     llmLocationModel: Schema.dynamic('model').description('用于生成地点的模型（推荐使用快速模型如 gemini-flash）'),
-    unsplashAccessKey: Schema.string().role('secret').default('').description('用于获取高质量风景背景图（从 unsplash.com/developers 免费申请）'),
+    unsplashAccessKey: Schema.string().role('secret').default('').description('Unsplash API Access Key (可选)'),
+    pexelsApiKey: Schema.string().role('secret').default('').description('Pexels API Key (可选，作为 Unsplash 的补充)'),
     backgroundFetchMode: Schema.union([
       Schema.const('auto').description('自动：尽量内联远程图片，遇到易超时域名则直接使用 URL'),
       Schema.const('always').description('强制服务端拉取并内联（更稳但可能慢）'),

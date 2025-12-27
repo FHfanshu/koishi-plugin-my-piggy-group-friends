@@ -4,6 +4,7 @@ import { Config } from '../config'
 import { Location, LOCATIONS } from '../constants'
 import { SystemMessage, HumanMessage } from '@langchain/core/messages'
 import { searchUnsplashPhoto } from './unsplash'
+import { searchPexelsPhoto } from './pexels'
 
 // 地点类别，用于增加多样性
 const LOCATION_CATEGORIES = [
@@ -116,17 +117,27 @@ export async function generateLocationWithLLM(
 
         let photoUrl: string | null = null
         for (const query of searchQueries) {
-          if (config.debug) ctx.logger('pig').debug(`Searching Unsplash for: ${query}`)
-          photoUrl = await searchUnsplashPhoto(ctx, config.unsplashAccessKey, query, config.debug)
+          // 1. Try Unsplash first
+          if (config.unsplashAccessKey) {
+            if (config.debug) ctx.logger('pig').debug(`Searching Unsplash for: ${query}`)
+            photoUrl = await searchUnsplashPhoto(ctx, config.unsplashAccessKey, query, config.debug)
+          }
+
+          // 2. Try Pexels as fallback
+          if (!photoUrl && config.pexelsApiKey) {
+            if (config.debug) ctx.logger('pig').debug(`Searching Pexels for: ${query}`)
+            photoUrl = await searchPexelsPhoto(ctx, config.pexelsApiKey, query, config.debug)
+          }
+
           if (photoUrl) {
-            if (config.debug) ctx.logger('pig').info(`Using Unsplash photo: ${photoUrl}`)
+            ctx.logger('pig').info(`Found photo URL: ${photoUrl}`)
             location.landscapeUrl = photoUrl
             break
           }
         }
 
         if (!photoUrl && config.debug) {
-          ctx.logger('pig').debug('All Unsplash searches returned no results, using LLM-generated URL')
+          ctx.logger('pig').debug('All image searches returned no results, using LLM-generated URL fallback')
         }
       }
 
