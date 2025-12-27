@@ -273,6 +273,12 @@ export function apply(ctx: Context, config: Config) {
 
   // Monthly Travel Handbook - 每月1日凌晨生成上月总结
   ctx.cron('0 0 1 * *', async () => {
+    // 检查是否启用自动月度总结
+    if (!config.monthlySummaryEnabled) {
+      ctx.logger('pig').debug('Monthly summary is disabled, skipping...')
+      return
+    }
+
     const now = new Date()
     // 计算上个月
     let year = now.getFullYear()

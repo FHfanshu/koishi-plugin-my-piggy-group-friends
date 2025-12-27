@@ -28,6 +28,8 @@ export interface Config {
   backgroundFetchTimeoutMs: number
   // Travel log retention
   logRetentionDays: number
+  // Monthly summary
+  monthlySummaryEnabled: boolean
   // Auto wake-up detection (experimental)
   experimentalAutoDetect: boolean
   // Debug
@@ -73,6 +75,7 @@ export const Config: Schema<Config> = Schema.intersect([
     useStorageService: Schema.boolean().default(true).description('使用 chatluna-storage-service 缓存图片（推荐）'),
     storageCacheHours: Schema.number().default(24).description('图片缓存时间（小时）'),
     logRetentionDays: Schema.number().default(45).description('旅行记录保留天数'),
+    monthlySummaryEnabled: Schema.boolean().default(false).description('每月1日自动生成上月旅行总结'),
     logPath: Schema.string().default('./data/pig/logs').description('本地日志存储路径（仅在不使用存储服务时生效）'),
   }).description('存储设置 💾'),
 
