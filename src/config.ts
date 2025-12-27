@@ -16,6 +16,9 @@ export interface Config {
   // LLM location generation
   llmLocationEnabled: boolean
   llmLocationModel: string
+  llmLocationCustomContext: string
+  // Image Search
+  imageSearchPrompt: string
   // Unsplash API
   unsplashAccessKey: string
   // Pexels API
@@ -40,6 +43,8 @@ export const Config: Schema<Config> = Schema.intersect([
   Schema.object({
     llmLocationEnabled: Schema.boolean().default(false).description('启用后使用 LLM 动态生成全球旅行地点，关闭则使用预设地点库'),
     llmLocationModel: Schema.dynamic('model').description('用于生成地点的模型（推荐使用快速模型如 gemini-flash）'),
+    llmLocationCustomContext: Schema.string().role('textarea').default('').description('自定义生成上下文（如：关注北欧神话、赛博朋克风格建筑等，留空则完全随机）'),
+    imageSearchPrompt: Schema.string().default('{landmark} {country} landscape').description('搜图关键词模板（可用变量：{landmark} 地标英文名, {country} 国家英文名, {city} 城市英文名）'),
     unsplashAccessKey: Schema.string().role('secret').default('').description('Unsplash API Access Key (可选)'),
     pexelsApiKey: Schema.string().role('secret').default('').description('Pexels API Key (可选，作为 Unsplash 的补充)'),
     backgroundFetchMode: Schema.union([

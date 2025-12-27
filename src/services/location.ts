@@ -81,11 +81,15 @@ export async function generateLocationWithLLM(
 
     // 生成随机提示增加多样性
     const hints = getRandomPromptHints()
-    const userPrompt = `请生成一个位于【${hints.continent}】的【${hints.category}】类型的旅游目的地。
+    let userPrompt = `请生成一个位于【${hints.continent}】的【${hints.category}】类型的旅游目的地。
 
-特别要求：这次请避开 ${hints.avoidCountries} 这些热门国家，选择一个更独特、更少人知道的地方。
+特别要求：这次请避开 ${hints.avoidCountries} 这些热门国家，选择一个更独特、更少人知道的地方。要求这个地方在地理位置或文化上具有独特性。`
 
-直接输出JSON，不要有任何其他文字。`
+    if (config.llmLocationCustomContext) {
+      userPrompt += `\n\n此外，请参考以下用户提供的偏好或上下文：${config.llmLocationCustomContext}`
+    }
+
+    userPrompt += `\n\n直接输出JSON，不要有任何其他文字。`
 
     if (config.debug) ctx.logger('pig').debug(`Location prompt hints: ${hints.continent}, ${hints.category}`)
 
@@ -105,14 +109,21 @@ export async function generateLocationWithLLM(
     if (location) {
       ctx.logger('pig').info(`LLM generated location: ${location.landmarkZh} (${location.landmark}), ${location.countryZh}`)
 
-      // Try to get a real photo URL from Unsplash API with multiple search attempts
-      if (config.unsplashAccessKey) {
-        // Build search queries in order of specificity
+      // Try to get a real photo URL from APIs with multiple search attempts
+      if (config.unsplashAccessKey || config.pexelsApiKey) {
+        // Build search queries using user-defined template or defaults
+        const template = config.imageSearchPrompt || '{landmark} {country} landscape'
+        const formatQuery = (tmpl: string) => tmpl
+          .replace('{landmark}', location.landmark)
+          .replace('{country}', location.country)
+          .replace('{city}', location.city || '')
+          .trim()
+
         const searchQueries = [
-          `${location.landmark} ${location.country}`,           // Most specific: landmark + country
-          location.city ? `${location.city} ${location.country}` : null,  // City + country
-          `${location.country} landscape`,                       // Country landscape
-          location.country,                                      // Just country name
+          formatQuery(template),                                     // Primary: User template
+          `${location.landmark} ${location.country}`,                // Fallback 1: specific
+          location.city ? `${location.city} ${location.country}` : null, // Fallback 2: city
+          location.country,                                          // Fallback 3: country
         ].filter(Boolean) as string[]
 
         let photoUrl: string | null = null
@@ -182,7 +193,9 @@ function parseLocationResponse(content: string): Location | null {
 
     // Validate and fix landscapeUrl if needed
     if (!location.landscapeUrl.startsWith('http')) {
-      location.landscapeUrl = `https://images.unsplash.com/featured/?${encodeURIComponent(location.landmark)},${encodeURIComponent(location.country)}`
+      // Create a sensible fallback URL using the search keywords
+      const query = `${encodeURIComponent(location.landmark)},${encodeURIComponent(location.country)}`
+      location.landscapeUrl = `https://images.unsplash.com/featured/?${query}`
     }
 
     return location
