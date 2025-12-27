@@ -5,6 +5,7 @@ import { Config } from './config'
 import { applyDatabase } from './database'
 import { getSunriseInfo } from './services/sunrise'
 import { triggerTravelSequence, TravelResult, UserInfo } from './services/travel'
+import { prepareMonthlySummary, generateMonthlySummaryCard, getUsersWithLogsInMonth } from './services/summary'
 
 export const name = 'my-pig-group-friends'
 export const inject = {
@@ -117,6 +118,90 @@ export function apply(ctx: Context, config: Config) {
       return formatTravelMessage(result, userId, config)
     })
 
+  // 月度总结调试命令
+  ctx.command('pig.summary [year:number] [month:number]', '生成月度旅行总结（调试用）')
+    .option('all', '-a 生成所有用户的总结')
+    .action(async ({ session, options }, yearArg, monthArg) => {
+      const now = new Date()
+      // 默认为上个月
+      let year = yearArg ?? now.getFullYear()
+      let month = monthArg ?? now.getMonth() // getMonth() 是 0-based，不加1就是上个月
+
+      // 如果当前是1月且没有指定年份，需要回到去年12月
+      if (!monthArg && now.getMonth() === 0) {
+        year = now.getFullYear() - 1
+        month = 12
+      } else if (!monthArg) {
+        month = now.getMonth() // 上个月
+      }
+
+      // 验证月份范围
+      if (month < 1 || month > 12) {
+        return '月份必须在 1-12 之间'
+      }
+
+      await session.send(`正在生成 ${year}年${month}月 的旅行总结...`)
+
+      try {
+        if (options.all) {
+          // 生成所有用户的总结
+          const users = await getUsersWithLogsInMonth(ctx, year, month)
+
+          if (users.length === 0) {
+            return `${year}年${month}月 没有任何旅行记录`
+          }
+
+          await session.send(`找到 ${users.length} 位用户有旅行记录，开始生成...`)
+
+          for (const { userId, platform } of users) {
+            try {
+              const summaryData = await prepareMonthlySummary(
+                ctx, userId, platform, userId, '', year, month
+              )
+              const result = await generateMonthlySummaryCard(ctx, config, summaryData)
+
+              // 发送卡片
+              const base64 = result.buffer.toString('base64')
+              await session.send(`用户 ${userId} 的总结：\n${segment.image(`base64://${base64}`)}`)
+            } catch (e) {
+              ctx.logger('pig').error(`Failed to generate summary for user ${userId}:`, e)
+              await session.send(`生成用户 ${userId} 的总结时出错: ${e}`)
+            }
+          }
+
+          return `已完成 ${users.length} 位用户的月度总结生成`
+        } else {
+          // 只生成当前用户的总结
+          const platform = session.platform
+          const userId = session.userId
+
+          const userInfo: UserInfo = {
+            userId,
+            username: session.author?.nickname || session.author?.name || session.username || userId,
+            avatarUrl: session.author?.avatar || ''
+          }
+
+          // 处理 QQ 头像
+          if (platform === 'onebot' && !userInfo.avatarUrl) {
+            userInfo.avatarUrl = `https://q.qlogo.cn/headimg_dl?dst_uin=${userId}&spec=640`
+          }
+
+          const summaryData = await prepareMonthlySummary(
+            ctx, userId, platform, userInfo.username, userInfo.avatarUrl, year, month
+          )
+
+          const result = await generateMonthlySummaryCard(ctx, config, summaryData)
+
+          // 发送卡片
+          const base64 = result.buffer.toString('base64')
+          return `${segment.at(userId)} ${year}年${month}月 旅行总结\n${segment.image(`base64://${base64}`)}`
+        }
+      } catch (e) {
+        ctx.logger('pig').error('Failed to generate monthly summary:', e)
+        return `生成月度总结失败: ${e}`
+      }
+    })
+
   ctx.middleware(async (session, next) => {
     // 如果没有开启实验性自动检测功能，直接跳过
     if (!config.experimentalAutoDetect) return next()
@@ -186,16 +271,47 @@ export function apply(ctx: Context, config: Config) {
     return next()
   })
 
-  // Monthly Travel Handbook
+  // Monthly Travel Handbook - 每月1日凌晨生成上月总结
   ctx.cron('0 0 1 * *', async () => {
     const now = new Date()
-    const lastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1)
+    // 计算上个月
+    let year = now.getFullYear()
+    let month = now.getMonth() // getMonth() 是 0-based，这里刚好是上个月
+    if (month === 0) {
+      year -= 1
+      month = 12
+    }
 
-    ctx.logger('pig').info('Generating monthly travel handbook...')
+    ctx.logger('pig').info(`Generating monthly travel handbook for ${year}/${month}...`)
 
-    // Logic to fetch all logs from lastMonth, generate long image summary,
-    // and send to respective users/groups.
-    // (Actual image stitching will be implemented later with Canvas)
+    try {
+      const users = await getUsersWithLogsInMonth(ctx, year, month)
+
+      if (users.length === 0) {
+        ctx.logger('pig').info(`No travel logs found for ${year}/${month}`)
+        return
+      }
+
+      ctx.logger('pig').info(`Found ${users.length} users with travel logs for ${year}/${month}`)
+
+      for (const { userId, platform } of users) {
+        try {
+          const summaryData = await prepareMonthlySummary(
+            ctx, userId, platform, userId, '', year, month
+          )
+          await generateMonthlySummaryCard(ctx, config, summaryData)
+          ctx.logger('pig').info(`Generated summary for user ${userId}`)
+
+          // TODO: 发送到对应群组（需要记录用户所在群组的机制）
+        } catch (e) {
+          ctx.logger('pig').error(`Failed to generate summary for user ${userId}:`, e)
+        }
+      }
+
+      ctx.logger('pig').info(`Monthly handbook generation completed for ${year}/${month}`)
+    } catch (e) {
+      ctx.logger('pig').error('Failed to generate monthly travel handbook:', e)
+    }
   })
 
   // Daily cleanup of old travel logs
