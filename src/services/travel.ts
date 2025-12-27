@@ -116,7 +116,9 @@ export async function triggerTravelSequence(ctx: Context, config: Config, userIn
     platform,
     timestamp: now,
     country: location.country,
+    countryZh: location.countryZh || location.country,
     location: location.landmark,
+    locationZh: location.landmarkZh || location.landmark,
     timezone: location.timezone || 'UTC',
     imagePath: imageUrl || '', // 存储 URL 或空
     isAIGC,

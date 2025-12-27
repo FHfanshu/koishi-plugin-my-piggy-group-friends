@@ -155,8 +155,9 @@ export async function generateMonthlySummaryCard(
       <div class="trip-item">
         <div class="trip-index">${index + 1}</div>
         <div class="trip-info">
-          <div class="trip-location">${escapeHtml(log.location)}</div>
-          <div class="trip-country">${escapeHtml(log.country)} · ${dayStr}</div>
+          <div class="trip-location">${escapeHtml(log.locationZh || log.location)}</div>
+          <div class="trip-country">${escapeHtml(log.countryZh || log.country)} · ${dayStr}</div>
+          <div class="trip-location-en">${escapeHtml(log.location)}</div>
         </div>
         <div class="trip-tz">${tz}</div>
       </div>
@@ -171,17 +172,20 @@ export async function generateMonthlySummaryCard(
   // 统计数据
   const statsHtml = `
     <div class="stats-grid">
-      <div class="stat-item">
+      <div class="stat-item bg-yellow">
         <div class="stat-value">${totalTrips}</div>
         <div class="stat-label">次旅行</div>
+        <div class="deco-dot"></div>
       </div>
-      <div class="stat-item">
+      <div class="stat-item bg-pink">
         <div class="stat-value">${countriesVisited.length}</div>
         <div class="stat-label">个国家</div>
+        <div class="deco-line"></div>
       </div>
-      <div class="stat-item">
+      <div class="stat-item bg-cyan">
         <div class="stat-value">${locationsVisited.length}</div>
         <div class="stat-label">个地点</div>
+        <div class="deco-triangle"></div>
       </div>
     </div>
   `
@@ -192,6 +196,8 @@ export async function generateMonthlySummaryCard(
 <head>
 <meta charset="UTF-8">
 <style>
+  @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;700;900&display=swap');
+
   * {
     margin: 0;
     padding: 0;
@@ -201,8 +207,14 @@ export async function generateMonthlySummaryCard(
   body {
     width: 1080px;
     min-height: 1920px;
-    font-family: "Noto Sans CJK SC", "Noto Sans SC", "Source Han Sans SC", "Microsoft YaHei", "WenQuanYi Micro Hei", sans-serif, "Noto Color Emoji";
-    background: linear-gradient(135deg, #667eea 0%, #764ba2 50%, #f093fb 100%);
+    font-family: "Noto Sans SC", sans-serif, "Noto Color Emoji";
+    background-color: #F0F0F0;
+    background-image:
+      radial-gradient(#000 10%, transparent 11%),
+      radial-gradient(#000 10%, transparent 11%);
+    background-size: 30px 30px;
+    background-position: 0 0, 15px 15px;
+    background-color: #FFDEE9;
     padding: 60px;
   }
 
@@ -211,10 +223,37 @@ export async function generateMonthlySummaryCard(
   }
 
   .container {
-    background: rgba(255, 255, 255, 0.95);
-    border-radius: 48px;
+    background: #fff;
+    border: 4px solid #000;
+    box-shadow: 20px 20px 0 #000;
     padding: 60px;
-    box-shadow: 0 40px 80px rgba(0,0,0,0.3);
+    position: relative;
+    overflow: hidden;
+  }
+
+  /* Memphis decorative elements */
+  .deco-shape-1 {
+    position: absolute;
+    top: -20px;
+    right: -20px;
+    width: 150px;
+    height: 150px;
+    background: #FFD700;
+    border: 4px solid #000;
+    border-radius: 50%;
+    z-index: 0;
+  }
+
+  .deco-shape-2 {
+    position: absolute;
+    bottom: 40px;
+    left: -30px;
+    width: 100px;
+    height: 100px;
+    background: #00CED1;
+    border: 4px solid #000;
+    transform: rotate(45deg);
+    z-index: 0;
   }
 
   .header {
@@ -222,20 +261,27 @@ export async function generateMonthlySummaryCard(
     align-items: center;
     gap: 32px;
     margin-bottom: 48px;
+    position: relative;
+    z-index: 1;
+    background: #fff;
+    border: 4px solid #000;
+    padding: 24px;
+    box-shadow: 8px 8px 0 #000;
   }
 
   .avatar-ring {
-    padding: 6px;
-    background: linear-gradient(135deg, #667eea, #764ba2);
+    padding: 0;
+    border: 4px solid #000;
     border-radius: 50%;
+    overflow: hidden;
+    background: #FF69B4;
   }
 
   .avatar {
     width: 120px;
     height: 120px;
-    border-radius: 50%;
     object-fit: cover;
-    border: 4px solid white;
+    display: block;
   }
 
   .user-info {
@@ -244,82 +290,118 @@ export async function generateMonthlySummaryCard(
 
   .username {
     font-size: 48px;
-    font-weight: 800;
-    color: #1d1d1f;
+    font-weight: 900;
+    color: #000;
     margin-bottom: 8px;
+    text-transform: uppercase;
+    letter-spacing: -1px;
   }
 
   .period {
     font-size: 28px;
-    color: #666;
-    font-weight: 500;
+    color: #000;
+    font-weight: 700;
+    background: #00CED1;
+    display: inline-block;
+    padding: 4px 12px;
+    border: 3px solid #000;
+    box-shadow: 4px 4px 0 #000;
   }
 
   .title-section {
     text-align: center;
     margin-bottom: 48px;
+    position: relative;
+    z-index: 1;
+    border-bottom: 4px solid #000;
+    padding-bottom: 24px;
   }
 
   .title {
-    font-size: 64px;
+    font-size: 80px;
     font-weight: 900;
-    background: linear-gradient(135deg, #667eea, #764ba2);
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-    background-clip: text;
+    color: #000;
     margin-bottom: 16px;
+    text-shadow: 6px 6px 0 #FF69B4;
+    letter-spacing: 4px;
   }
 
   .subtitle {
     font-size: 32px;
-    color: #888;
-    font-weight: 500;
+    color: #000;
+    font-weight: 700;
+    background: #FFD700;
+    display: inline-block;
+    padding: 8px 24px;
+    border: 3px solid #000;
+    box-shadow: 6px 6px 0 #000;
+    transform: rotate(-2deg);
   }
 
   .stats-grid {
     display: flex;
-    justify-content: space-around;
+    justify-content: space-between;
     margin-bottom: 48px;
-    padding: 40px 0;
-    background: linear-gradient(135deg, rgba(102,126,234,0.1), rgba(118,75,162,0.1));
-    border-radius: 32px;
+    gap: 24px;
+    position: relative;
+    z-index: 1;
   }
 
   .stat-item {
     text-align: center;
+    flex: 1;
+    padding: 32px 16px;
+    border: 4px solid #000;
+    box-shadow: 12px 12px 0 #000;
+    position: relative;
+    overflow: hidden;
   }
+
+  .bg-yellow { background: #FFD700; }
+  .bg-pink { background: #FF69B4; }
+  .bg-cyan { background: #00CED1; }
 
   .stat-value {
     font-size: 72px;
     font-weight: 900;
-    color: #667eea;
+    color: #000;
     line-height: 1;
+    position: relative;
+    z-index: 2;
   }
 
   .stat-label {
     font-size: 24px;
-    color: #666;
+    color: #000;
     margin-top: 8px;
-    font-weight: 500;
+    font-weight: 700;
+    text-transform: uppercase;
+    position: relative;
+    z-index: 2;
   }
 
   .trips-section {
     margin-bottom: 32px;
+    position: relative;
+    z-index: 1;
   }
 
   .section-title {
-    font-size: 32px;
-    font-weight: 700;
-    color: #1d1d1f;
+    font-size: 36px;
+    font-weight: 900;
+    color: #000;
     margin-bottom: 24px;
-    padding-left: 16px;
-    border-left: 6px solid #667eea;
+    padding: 12px 24px;
+    border: 4px solid #000;
+    display: inline-block;
+    background: #fff;
+    box-shadow: 8px 8px 0 #000;
   }
 
   .trips-list {
     display: flex;
     flex-direction: column;
-    gap: 16px;
+    gap: 20px;
   }
 
   .trip-item {
@@ -327,95 +409,148 @@ export async function generateMonthlySummaryCard(
     align-items: center;
     gap: 20px;
     padding: 20px 24px;
-    background: #f8f9fa;
-    border-radius: 20px;
+    background: #fff;
+    border: 3px solid #000;
+    box-shadow: 8px 8px 0 #000;
     transition: transform 0.2s;
+    position: relative;
+    overflow: hidden;
+  }
+
+  .trip-item:nth-child(odd) {
+    transform: rotate(0.5deg);
+  }
+
+  .trip-item:nth-child(even) {
+    transform: rotate(-0.5deg);
   }
 
   .trip-index {
     width: 48px;
     height: 48px;
-    background: linear-gradient(135deg, #667eea, #764ba2);
-    color: white;
-    border-radius: 50%;
+    background: #000;
+    color: #fff;
+    border-radius: 0;
     display: flex;
     align-items: center;
     justify-content: center;
     font-size: 24px;
     font-weight: 700;
     flex-shrink: 0;
+    box-shadow: 4px 4px 0 #FF69B4;
+    position: relative;
+    z-index: 2;
   }
 
   .trip-info {
     flex: 1;
+    position: relative;
+    z-index: 2;
   }
 
   .trip-location {
     font-size: 28px;
-    font-weight: 700;
-    color: #1d1d1f;
+    font-weight: 800;
+    color: #000;
     margin-bottom: 4px;
+  }
+
+  .trip-location-en {
+    position: absolute;
+    right: 120px;
+    bottom: -10px;
+    font-size: 16px;
+    font-weight: 900;
+    color: rgba(0,0,0,0.08);
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    pointer-events: none;
+    white-space: nowrap;
+    font-style: italic;
+    z-index: 1;
   }
 
   .trip-country {
     font-size: 22px;
-    color: #888;
+    color: #000;
+    font-weight: 500;
+    background: #eee;
+    display: inline-block;
+    padding: 2px 8px;
+    border: 2px solid #000;
   }
 
   .trip-tz {
     font-size: 18px;
-    font-weight: 600;
-    color: #667eea;
-    background: rgba(102, 126, 234, 0.1);
+    font-weight: 700;
+    color: #000;
+    background: #FFD700;
     padding: 6px 12px;
-    border-radius: 8px;
+    border: 2px solid #000;
+    box-shadow: 3px 3px 0 #000;
     flex-shrink: 0;
   }
 
   .more-trips {
     text-align: center;
     padding: 20px;
-    color: #888;
+    color: #000;
     font-size: 24px;
+    font-weight: 700;
+    background: #fff;
+    border: 3px dashed #000;
+    margin-top: 10px;
   }
 
   .footer {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    margin-top: 40px;
+    margin-top: 60px;
     padding-top: 32px;
-    border-top: 2px solid #eee;
+    border-top: 6px solid #000;
+    position: relative;
+    z-index: 1;
   }
 
   .brand {
     display: flex;
     align-items: center;
     gap: 12px;
-    opacity: 0.6;
   }
 
   .brand-icon {
     font-size: 40px;
+    background: #FF69B4;
+    border: 3px solid #000;
+    padding: 4px;
+    line-height: 1;
+    box-shadow: 4px 4px 0 #000;
   }
 
   .brand-name {
-    font-size: 24px;
-    font-weight: 800;
+    font-size: 32px;
+    font-weight: 900;
     text-transform: uppercase;
-    letter-spacing: 0.1em;
-    color: #1d1d1f;
+    color: #000;
+    font-style: italic;
   }
 
   .generated-at {
     font-size: 20px;
-    color: #888;
+    color: #000;
+    font-weight: 600;
+    background: #fff;
+    padding: 4px 12px;
+    border: 2px solid #000;
   }
 
   .empty-state {
     text-align: center;
     padding: 80px 40px;
-    color: #888;
+    border: 4px dashed #000;
+    background: #fff;
+    margin: 40px 0;
   }
 
   .empty-icon {
@@ -425,10 +560,15 @@ export async function generateMonthlySummaryCard(
 
   .empty-text {
     font-size: 32px;
+    font-weight: 700;
+    color: #000;
   }
 </style>
 </head>
 <body>
+  <div class="deco-shape-1"></div>
+  <div class="deco-shape-2"></div>
+
   <div class="container">
     <div class="header">
       <div class="avatar-ring">
@@ -436,20 +576,20 @@ export async function generateMonthlySummaryCard(
       </div>
       <div class="user-info">
         <div class="username">${escapeHtml(username)}</div>
-        <div class="period">${year}年${monthName} 旅行总结</div>
+        <div class="period">${year}年${monthName} 总结</div>
       </div>
     </div>
 
     <div class="title-section">
-      <div class="title"><span class="twemoji">🐷</span> 猪醒月报</div>
-      <div class="subtitle">Monthly Travel Summary</div>
+      <div class="title">猪猪日报</div>
+      <div class="subtitle">PIG DAILY SUMMARY</div>
     </div>
 
     ${totalTrips > 0 ? `
       ${statsHtml}
 
       <div class="trips-section">
-        <div class="section-title">足迹记录</div>
+        <div class="section-title">本月足迹 TRACKS</div>
         <div class="trips-list">
           ${tripsHtml}
           ${moreTripsHtml}
@@ -467,7 +607,7 @@ export async function generateMonthlySummaryCard(
         <div class="brand-icon"><span class="twemoji">🐷</span></div>
         <div class="brand-name">Pig Travel</div>
       </div>
-      <div class="generated-at">生成于 ${new Date().toLocaleDateString('zh-CN')}</div>
+      <div class="generated-at">${new Date().toLocaleDateString('zh-CN')}</div>
     </div>
   </div>
 

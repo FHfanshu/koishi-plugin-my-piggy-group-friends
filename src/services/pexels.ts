@@ -28,7 +28,8 @@ interface PexelsSearchResponse {
 }
 
 /**
- * Search for a photo on Pexels and return the large-sized URL
+ * Search for a photo on Pexels and return a randomly selected large-sized URL
+ * Fetches multiple results and randomly selects one to avoid repetitive images
  * @returns The photo URL or null if not found/error
  */
 export async function searchPexelsPhoto(
@@ -50,7 +51,7 @@ export async function searchPexelsPhoto(
       {
         params: {
           query,
-          per_page: 1,
+          per_page: 10, // Fetch more results for variety
           orientation: 'landscape',
         },
         headers: {
@@ -61,9 +62,13 @@ export async function searchPexelsPhoto(
     )
 
     if (response.photos && response.photos.length > 0) {
+      // Randomly select one of the results for variety
+      const randomIndex = Math.floor(Math.random() * response.photos.length)
+      const selectedPhoto = response.photos[randomIndex]
+
       // Use large resolution (usually around 940px width, but pexels serves high quality)
       // or we can use custom sizing via params if needed
-      let photoUrl = response.photos[0].src.large2x || response.photos[0].src.large
+      let photoUrl = selectedPhoto.src.large2x || selectedPhoto.src.large
 
       // Pexels URLs often already contain params like auto=compress&cs=tinysrgb&h=650&w=940
       // We can adjust them for our needs (1080px width)
@@ -75,7 +80,7 @@ export async function searchPexelsPhoto(
         photoUrl += '?w=1080'
       }
 
-      if (debug) ctx.logger('pig').debug(`Pexels: Found photo URL: ${photoUrl}`)
+      if (debug) ctx.logger('pig').debug(`Pexels: Selected photo ${randomIndex + 1}/${response.photos.length}, URL: ${photoUrl}`)
       return photoUrl
     }
 

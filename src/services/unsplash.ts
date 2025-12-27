@@ -22,7 +22,8 @@ interface UnsplashSearchResponse {
 }
 
 /**
- * Search for a photo on Unsplash and return the regular-sized URL
+ * Search for a photo on Unsplash and return a randomly selected regular-sized URL
+ * Fetches multiple results and randomly selects one to avoid repetitive images
  * @returns The photo URL or null if not found/error
  */
 export async function searchUnsplashPhoto(
@@ -44,7 +45,7 @@ export async function searchUnsplashPhoto(
       {
         params: {
           query,
-          per_page: 1,
+          per_page: 10, // Fetch more results for variety
           orientation: 'landscape',
         },
         headers: {
@@ -56,15 +57,19 @@ export async function searchUnsplashPhoto(
     )
 
     if (response.results && response.results.length > 0) {
+      // Randomly select one of the results for variety
+      const randomIndex = Math.floor(Math.random() * response.results.length)
+      const selectedPhoto = response.results[randomIndex]
+
       // Use regular resolution (1080px width) for optimal size/quality balance
-      let photoUrl = response.results[0].urls.regular
+      let photoUrl = selectedPhoto.urls.regular
       // Append webp format and quality params via Imgix (Unsplash's image processing service)
       if (photoUrl.includes('?')) {
         photoUrl += '&fm=webp&q=85'
       } else {
         photoUrl += '?fm=webp&q=85'
       }
-      if (debug) ctx.logger('pig').debug(`Unsplash: Found photo URL: ${photoUrl}`)
+      if (debug) ctx.logger('pig').debug(`Unsplash: Selected photo ${randomIndex + 1}/${response.results.length}, URL: ${photoUrl}`)
       return photoUrl
     }
 
