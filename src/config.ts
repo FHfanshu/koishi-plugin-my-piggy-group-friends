@@ -24,11 +24,17 @@ export interface Config {
   experimentalAutoDetect: boolean
   // Debug
   debug: boolean
+  emojiFont: 'Noto Color Emoji' | 'Twemoji' | 'System'
 }
 
 export const Config: Schema<Config> = Schema.intersect([
   Schema.object({
     outputMode: Schema.union(['text', 'image']).default('image').description('输出模式：text 纯文本，image 生成精美卡片'),
+    emojiFont: Schema.union([
+      Schema.const('System').description('系统默认'),
+      Schema.const('Noto Color Emoji').description('Noto Color Emoji'),
+      Schema.const('Twemoji').description('Twemoji (Twitter Emoji)'),
+    ]).default('System').description('Emoji 字体偏好（需确保容器内已安装相应字体）'),
     travelMessageTemplate: Schema.string().default('去了 {landmark}，{country}！📸').description('旅行消息模板（可用变量：{landmark} 地标名, {country} 国家名）'),
   }).description('基础设置'),
 

@@ -150,6 +150,9 @@ export async function generateFootprintCard(
   const now = new Date()
   const dateStr = `${now.getFullYear()}年${now.getMonth() + 1}月${now.getDate()}日`
 
+  // Handle emoji font preference
+  const emojiFont = config.emojiFont === 'System' ? '' : `"${config.emojiFont}", `
+
   const html = `
 <!DOCTYPE html>
 <html>
@@ -168,7 +171,7 @@ export async function generateFootprintCard(
     height: 1920px;
     overflow: hidden;
     /* Prioritize system fonts with wide Unicode coverage for emoji and CJK support */
-    font-family: "Noto Sans CJK SC", "Noto Sans SC", "Source Han Sans SC", "Microsoft YaHei", "WenQuanYi Micro Hei", "Droid Sans Fallback", "PingFang SC", -apple-system, BlinkMacSystemFont, "Segoe UI", "Roboto", "Helvetica Neue", Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji";
+    font-family: ${emojiFont}"Noto Sans CJK SC", "Noto Sans SC", "Source Han Sans SC", "Microsoft YaHei", "WenQuanYi Micro Hei", "Droid Sans Fallback", "PingFang SC", -apple-system, BlinkMacSystemFont, "Segoe UI", "Roboto", "Helvetica Neue", Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji";
     background: #f0f0f2;
     --bg-image: url('${bgImage}');
   }
