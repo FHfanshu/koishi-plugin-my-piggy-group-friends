@@ -24,6 +24,7 @@ export interface PigTravelLog {
   timestamp: Date
   country: string
   location: string
+  timezone: string
   imagePath: string
   isAIGC: boolean
 }
@@ -46,6 +47,7 @@ export function applyDatabase(ctx: Context) {
     timestamp: 'timestamp',
     country: 'string',
     location: 'string',
+    timezone: 'string',
     imagePath: 'string',
     isAIGC: 'boolean',
   }, { primary: 'id', autoInc: true })

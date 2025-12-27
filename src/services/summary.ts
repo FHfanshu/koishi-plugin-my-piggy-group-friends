@@ -79,6 +79,36 @@ export async function getUsersWithLogsInMonth(
 }
 
 /**
+ * 将 IANA 时区字符串转换为简短的 UTC 偏移量显示
+ * 例如: "Asia/Tokyo" -> "UTC+9", "America/New_York" -> "UTC-5"
+ */
+function formatTimezone(timezone: string): string {
+  if (!timezone || timezone === 'UTC') return 'UTC'
+
+  try {
+    // 使用 Intl API 获取时区偏移
+    const now = new Date()
+    const formatter = new Intl.DateTimeFormat('en-US', {
+      timeZone: timezone,
+      timeZoneName: 'shortOffset'
+    })
+    const parts = formatter.formatToParts(now)
+    const tzPart = parts.find(p => p.type === 'timeZoneName')
+    if (tzPart) {
+      // 格式如 "GMT+9" 或 "GMT-5"，转换为 "UTC+9"
+      return tzPart.value.replace('GMT', 'UTC')
+    }
+  } catch {
+    // 如果时区无效，返回原始值或 UTC
+  }
+
+  // 如果时区已经是 UTC+X 格式，直接返回
+  if (timezone.startsWith('UTC')) return timezone
+
+  return 'UTC'
+}
+
+/**
  * 生成月度总结卡片
  */
 export async function generateMonthlySummaryCard(
@@ -96,6 +126,7 @@ export async function generateMonthlySummaryCard(
   const tripsHtml = logs.slice(0, 12).map((log, index) => {
     const date = new Date(log.timestamp)
     const dayStr = `${date.getMonth() + 1}/${date.getDate()}`
+    const tz = formatTimezone(log.timezone)
     return `
       <div class="trip-item">
         <div class="trip-index">${index + 1}</div>
@@ -103,6 +134,7 @@ export async function generateMonthlySummaryCard(
           <div class="trip-location">${escapeHtml(log.location)}</div>
           <div class="trip-country">${escapeHtml(log.country)} · ${dayStr}</div>
         </div>
+        <div class="trip-tz">${tz}</div>
       </div>
     `
   }).join('')
@@ -304,6 +336,16 @@ export async function generateMonthlySummaryCard(
   .trip-country {
     font-size: 22px;
     color: #888;
+  }
+
+  .trip-tz {
+    font-size: 18px;
+    font-weight: 600;
+    color: #667eea;
+    background: rgba(102, 126, 234, 0.1);
+    padding: 6px 12px;
+    border-radius: 8px;
+    flex-shrink: 0;
   }
 
   .more-trips {
