@@ -65,6 +65,13 @@ export async function generateFootprintCard(
   }
 
   const inlineMaxBytes = 900 * 1024
+  const fetchTimeoutMs = config.backgroundFetchTimeoutMs ?? 8000
+  const shouldServerFetch = (url: string) => {
+    const mode = config.backgroundFetchMode || 'auto'
+    if (mode === 'never') return false
+    if (mode === 'always') return true
+    return !/^https?:\/\/(images|source)\.unsplash\.com\//i.test(url)
+  }
 
   const fetchToDataUrl = async (url: string) => {
     const normalized = normalizeImageUrl(url)
@@ -89,11 +96,17 @@ export async function generateFootprintCard(
     }
 
     if (/^https?:\/\//i.test(normalized)) {
+      if (!shouldServerFetch(normalized)) {
+        if (config.debug) {
+          ctx.logger('pig').debug(`Skip server-side fetch for background: ${normalized}`)
+        }
+        return normalized
+      }
       try {
         if (config.debug) ctx.logger('pig').debug(`Server-side fetching background: ${normalized}`)
         const response = await ctx.http(normalized, {
           responseType: 'arraybuffer',
-          timeout: 8000,  // Reduced from 15s to 8s for better responsiveness
+          timeout: fetchTimeoutMs,
           headers: {
             'User-Agent': 'Mozilla/5.0',
             'Accept': 'image/avif,image/webp,image/apng,image/*,*/*;q=0.8',
@@ -150,9 +163,6 @@ export async function generateFootprintCard(
   const now = new Date()
   const dateStr = `${now.getFullYear()}年${now.getMonth() + 1}月${now.getDate()}日`
 
-  // Handle emoji font preference
-  const emojiFont = config.emojiFont === 'System' ? '' : `"${config.emojiFont}", `
-
   const html = `
 <!DOCTYPE html>
 <html>
@@ -170,11 +180,17 @@ export async function generateFootprintCard(
     width: 1080px;
     height: 1920px;
     overflow: hidden;
-    /* Prioritize system fonts with wide Unicode coverage for emoji and CJK support */
-    font-family: ${emojiFont}"Noto Sans CJK SC", "Noto Sans SC", "Source Han Sans SC", "Microsoft YaHei", "WenQuanYi Micro Hei", "Droid Sans Fallback", "PingFang SC", -apple-system, BlinkMacSystemFont, "Segoe UI", "Roboto", "Helvetica Neue", Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji";
+    /* Default emoji font set to Noto Color Emoji to maintain layout consistency */
+    font-family: "Noto Sans CJK SC", "Noto Sans SC", "Source Han Sans SC", "Microsoft YaHei", "WenQuanYi Micro Hei", "Droid Sans Fallback", "PingFang SC", -apple-system, BlinkMacSystemFont, "Segoe UI", "Roboto", "Helvetica Neue", Arial, sans-serif, "Noto Color Emoji", "Apple Color Emoji", "Segoe UI Emoji";
     background: #f0f0f2;
     --bg-image: url('${bgImage}');
   }
+
+  /* Specific class for the pig emoji to use Twemoji */
+  .twemoji {
+    font-family: "Twemoji", "Noto Color Emoji", sans-serif;
+  }
+
 
   .wrapper {
     position: relative;
@@ -351,7 +367,7 @@ export async function generateFootprintCard(
   .message-text {
     font-size: 56px;
     line-height: 1.25;
-    font-weight: 800;
+    font-weight: 900;
     color: #1d1d1f;
     letter-spacing: -0.03em;
     word-break: break-word;
@@ -365,7 +381,10 @@ export async function generateFootprintCard(
     box-decoration-break: clone;
     -webkit-box-decoration-break: clone;
     display: inline-block;
+    font-weight: 900;
+    letter-spacing: -0.01em;
   }
+
 
   .divider {
     height: 2px;
@@ -399,14 +418,14 @@ export async function generateFootprintCard(
 
   .location-pill span {
     font-size: 26px;
-    font-weight: 700;
+    font-weight: 800;
     color: #ffffff;
     letter-spacing: 0.02em;
   }
 
   .landmark-name {
     font-size: 38px;
-    font-weight: 800;
+    font-weight: 900;
     color: #1d1d1f;
     letter-spacing: -0.01em;
     padding-left: 6px;
@@ -457,7 +476,7 @@ export async function generateFootprintCard(
 
           <div class="message-body">
             <div class="message-text">
-              今天 🐷猪醒在<br/>
+              今天 <span class="twemoji">🐷</span>猪醒在<br/>
               <span class="highlight">${data.location.landmarkZh || data.location.landmark}</span>
             </div>
           </div>
@@ -473,7 +492,7 @@ export async function generateFootprintCard(
             </div>
 
             <div class="brand-tag">
-              <div class="brand-icon">🐷</div>
+              <div class="brand-icon"><span class="twemoji">🐷</span></div>
               <div class="brand-name">Pig Travel</div>
             </div>
           </div>

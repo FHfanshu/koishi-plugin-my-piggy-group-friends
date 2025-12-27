@@ -18,23 +18,20 @@ export interface Config {
   llmLocationModel: string
   // Unsplash API
   unsplashAccessKey: string
+  // Background fetch behavior
+  backgroundFetchMode: 'auto' | 'always' | 'never'
+  backgroundFetchTimeoutMs: number
   // Travel log retention
   logRetentionDays: number
   // Auto wake-up detection (experimental)
   experimentalAutoDetect: boolean
   // Debug
   debug: boolean
-  emojiFont: 'Noto Color Emoji' | 'Twemoji' | 'System'
 }
 
 export const Config: Schema<Config> = Schema.intersect([
   Schema.object({
     outputMode: Schema.union(['text', 'image']).default('image').description('输出模式：text 纯文本，image 生成精美卡片'),
-    emojiFont: Schema.union([
-      Schema.const('System').description('系统默认'),
-      Schema.const('Noto Color Emoji').description('Noto Color Emoji'),
-      Schema.const('Twemoji').description('Twemoji (Twitter Emoji)'),
-    ]).default('System').description('Emoji 字体偏好（需确保容器内已安装相应字体）'),
     travelMessageTemplate: Schema.string().default('去了 {landmark}，{country}！📸').description('旅行消息模板（可用变量：{landmark} 地标名, {country} 国家名）'),
   }).description('基础设置'),
 
@@ -42,6 +39,12 @@ export const Config: Schema<Config> = Schema.intersect([
     llmLocationEnabled: Schema.boolean().default(false).description('启用后使用 LLM 动态生成全球旅行地点，关闭则使用预设地点库'),
     llmLocationModel: Schema.dynamic('model').description('用于生成地点的模型（推荐使用快速模型如 gemini-flash）'),
     unsplashAccessKey: Schema.string().role('secret').default('').description('用于获取高质量风景背景图（从 unsplash.com/developers 免费申请）'),
+    backgroundFetchMode: Schema.union([
+      Schema.const('auto').description('自动：尽量内联远程图片，遇到易超时域名则直接使用 URL'),
+      Schema.const('always').description('强制服务端拉取并内联（更稳但可能慢）'),
+      Schema.const('never').description('不进行服务端拉取，直接使用 URL'),
+    ]).default('auto').description('背景图服务端拉取策略'),
+    backgroundFetchTimeoutMs: Schema.number().default(8000).description('背景图服务端拉取超时（毫秒）'),
   }).description('地点与图片 🌍'),
 
   Schema.object({
