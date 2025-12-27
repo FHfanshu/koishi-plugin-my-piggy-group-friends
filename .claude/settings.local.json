@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(yarn install)",
+      "Bash(yarn yakumo build my-pig-group-friends)",
+      "Bash(yarn build my-pig-group-friends)",
+      "Bash(ls node_modules/.bin/yakumo*)",
+      "Bash(yarn yakumo build koishi-plugin-my-pig-group-friends)",
+      "Bash(yarn workspace koishi-plugin-my-pig-group-friends add koishi-plugin-cron)"
+    ]
+  }
+}
