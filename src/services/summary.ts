@@ -43,7 +43,7 @@ export async function getMonthlyLogs(
   })
 
   // Sort by timestamp
-  logs.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime())
+  logs.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
 
   return logs
 }
