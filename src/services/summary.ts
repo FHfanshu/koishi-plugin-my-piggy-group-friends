@@ -132,7 +132,7 @@ export async function generateMonthlySummaryCard(
         },
       })
       const buffer = Buffer.from(response.data as ArrayBuffer)
-      const contentType = response.headers?.get?.('content-type') || 'image/jpeg'
+      const contentType = response.headers?.['content-type'] || 'image/jpeg'
       avatarUrl = `data:${contentType};base64,${buffer.toString('base64')}`
       if (config.debug) ctx.logger('pig').debug(`Avatar fetched successfully, size: ${buffer.length}`)
     } catch (e) {
@@ -581,8 +581,8 @@ export async function generateMonthlySummaryCard(
     </div>
 
     <div class="title-section">
-      <div class="title">猪猪日报</div>
-      <div class="subtitle">PIG DAILY SUMMARY</div>
+      <div class="title">猪猪月报</div>
+      <div class="subtitle">PIG MONTHLY SUMMARY</div>
     </div>
 
     ${totalTrips > 0 ? `
@@ -612,7 +612,22 @@ export async function generateMonthlySummaryCard(
   </div>
 
   <script>
-    window.renderReady = document.fonts.ready.then(() => new Promise(r => setTimeout(r, 100)));
+    async function waitForImages() {
+      const images = Array.from(document.images);
+      const promises = images.map(img => {
+        if (img.complete) return Promise.resolve();
+        return new Promise(resolve => {
+          img.onload = () => resolve();
+          img.onerror = () => resolve();
+        });
+      });
+      await Promise.all([
+        ...promises,
+        document.fonts.ready
+      ]);
+      await new Promise(r => setTimeout(r, 100));
+    }
+    window.renderReady = waitForImages();
   </script>
 </body>
 </html>

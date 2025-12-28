@@ -1,4 +1,3 @@
-import { Session } from 'koishi'
 import { MediaLunaService } from 'koishi-plugin-media-luna'
 import { Service } from 'koishi'
 import { BaseMessage } from '@langchain/core/messages'

@@ -11,16 +11,19 @@ export interface PigUserState {
   id: number
   userId: string
   platform: string
+  guildId: string
   lastWakeUp: Date
   lastSunrise: Date
   latitude?: number
   longitude?: number
+  abnormalCount: number
 }
 
 export interface PigTravelLog {
   id: number
   userId: string
   platform: string
+  guildId: string
   timestamp: Date
   country: string
   countryZh: string
@@ -36,16 +39,19 @@ export function applyDatabase(ctx: Context) {
     id: 'unsigned',
     userId: 'string',
     platform: 'string',
+    guildId: 'string',
     lastWakeUp: 'timestamp',
     lastSunrise: 'timestamp',
     latitude: 'float',
     longitude: 'float',
+    abnormalCount: 'unsigned',
   }, { primary: 'id', autoInc: true })
 
   ctx.model.extend('pig_travel_log', {
     id: 'unsigned',
     userId: 'string',
     platform: 'string',
+    guildId: 'string',
     timestamp: 'timestamp',
     country: 'string',
     countryZh: 'string',

@@ -164,17 +164,24 @@ export async function generateLocationWithLLM(
       if (config.unsplashAccessKey || config.pexelsApiKey) {
         // Build search queries using user-defined template or defaults
         const template = config.imageSearchPrompt || '{landmark} {country} landscape'
-        const formatQuery = (tmpl: string) => tmpl
-          .replace('{landmark}', location.landmark)
-          .replace('{country}', location.country)
-          .replace('{city}', location.city || '')
-          .trim()
+        const formatQuery = (tmpl: string) => {
+          const raw = tmpl
+            .replace('{landmark}', location.landmark)
+            .replace('{country}', location.country)
+            .replace('{city}', location.city || '')
+            .trim()
+          // Remove non-Latin characters (Chinese, etc.) as Unsplash/Pexels search works poorly with them
+          return raw.replace(/[^\u0000-\u007F\u00C0-\u024F\u1E00-\u1EFF]/g, ' ').replace(/\s+/g, ' ').trim()
+        }
+
+        // Helper to clean query (remove non-Latin characters)
+        const cleanQuery = (q: string) => q.replace(/[^\u0000-\u007F\u00C0-\u024F\u1E00-\u1EFF]/g, ' ').replace(/\s+/g, ' ').trim()
 
         const searchQueries = [
           formatQuery(template),                                     // Primary: User template
-          `${location.landmark} ${location.country}`,                // Fallback 1: specific
-          location.city ? `${location.city} ${location.country}` : null, // Fallback 2: city
-          location.country,                                          // Fallback 3: country
+          cleanQuery(`${location.landmark} ${location.country}`),    // Fallback 1: specific
+          location.city ? cleanQuery(`${location.city} ${location.country}`) : null, // Fallback 2: city
+          cleanQuery(location.country),                              // Fallback 3: country
         ].filter(Boolean) as string[]
 
         let photoUrl: string | null = null

@@ -19,7 +19,7 @@ export interface UserInfo {
   avatarUrl: string
 }
 
-export async function triggerTravelSequence(ctx: Context, config: Config, userInfo: UserInfo, platform: string): Promise<TravelResult> {
+export async function triggerTravelSequence(ctx: Context, config: Config, userInfo: UserInfo, platform: string, guildId: string = ''): Promise<TravelResult> {
   // Get location - use LLM if enabled, otherwise use static locations
   let location: Location
   if (config.llmLocationEnabled && ctx.chatluna) {
@@ -114,6 +114,7 @@ export async function triggerTravelSequence(ctx: Context, config: Config, userIn
   await ctx.database.create('pig_travel_log', {
     userId: userInfo.userId,
     platform,
+    guildId,
     timestamp: now,
     country: location.country,
     countryZh: location.countryZh || location.country,

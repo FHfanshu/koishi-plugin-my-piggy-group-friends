@@ -1,16 +1,18 @@
 import { Context, segment } from 'koishi'
 import {} from 'koishi-plugin-cron'
+import {} from 'koishi-plugin-glyph'
 import './types'
 import { Config } from './config'
 import { applyDatabase } from './database'
 import { getSunriseInfo } from './services/sunrise'
 import { triggerTravelSequence, TravelResult, UserInfo } from './services/travel'
 import { prepareMonthlySummary, generateMonthlySummaryCard, getUsersWithLogsInMonth } from './services/summary'
+import { getPigLeaderboard, getSleepLeaderboard, generatePigLeaderboardCard, generateSleepLeaderboardCard } from './services/leaderboard'
 
 export const name = 'my-pig-group-friends'
 export const inject = {
   required: ['database', 'cron', 'puppeteer'],
-  optional: ['mediaLuna', 'chatluna_storage', 'chatluna']
+  optional: ['mediaLuna', 'chatluna_storage', 'chatluna', 'glyph']
 }
 export * from './config'
 
@@ -114,7 +116,7 @@ export function apply(ctx: Context, config: Config) {
         }
       }
 
-      const result = await triggerTravelSequence(ctx, config, userInfo, platform)
+      const result = await triggerTravelSequence(ctx, config, userInfo, platform, session.guildId || '')
       return formatTravelMessage(result, userId, config)
     })
 
@@ -204,6 +206,116 @@ export function apply(ctx: Context, config: Config) {
       }
     })
 
+  // 猪排行榜
+  ctx.command('pig.rank', '查看群内猪排行榜')
+    .alias('猪排行')
+    .action(async ({ session }) => {
+      if (!session.guildId) {
+        return '请在群组中使用此命令'
+      }
+
+      try {
+        await session.send('正在生成猪排行榜...')
+
+        // 获取排行数据
+        const entries = await getPigLeaderboard(ctx, session.guildId, session.platform, 10)
+
+        if (entries.length === 0) {
+          return '本群还没有旅行记录哦~'
+        }
+
+        // 填充用户信息（昵称和头像）
+        for (const entry of entries) {
+          try {
+            // QQ 平台头像
+            if (session.platform === 'onebot' || session.platform === 'qq' || session.platform.includes('qq')) {
+              entry.avatarUrl = `https://q.qlogo.cn/headimg_dl?dst_uin=${entry.userId}&spec=640`
+            }
+
+            // 尝试获取群成员信息
+            if (session.bot?.getGuildMember) {
+              try {
+                const member = await session.bot.getGuildMember(session.guildId, entry.userId)
+                entry.username = member.nick || member.name || member.user?.name || entry.userId
+                if (!entry.avatarUrl) {
+                  entry.avatarUrl = member.user?.avatar || ''
+                }
+              } catch {
+                // 忽略获取失败
+              }
+            }
+          } catch {
+            // 忽略用户信息获取失败
+          }
+        }
+
+        // 生成卡片
+        const result = await generatePigLeaderboardCard(ctx, config, entries, session.guildId)
+
+        // 返回图片
+        const base64 = result.buffer.toString('base64')
+        return segment.image(`base64://${base64}`)
+      } catch (e) {
+        ctx.logger('pig').error('Failed to generate pig leaderboard:', e)
+        return `生成猪排行榜失败: ${e}`
+      }
+    })
+
+  // 作息排行榜
+  ctx.command('pig.sleep', '查看群内作息排行榜')
+    .alias('熬夜榜')
+    .action(async ({ session }) => {
+      if (!session.guildId) {
+        return '请在群组中使用此命令'
+      }
+
+      try {
+        await session.send('正在生成熬夜王榜...')
+
+        // 获取排行数据
+        const entries = await getSleepLeaderboard(ctx, session.guildId, session.platform, 10)
+
+        if (entries.length === 0) {
+          return '本群还没有熬夜记录哦~'
+        }
+
+        // 填充用户信息（昵称和头像）
+        for (const entry of entries) {
+          try {
+            // QQ 平台头像
+            if (session.platform === 'onebot' || session.platform === 'qq' || session.platform.includes('qq')) {
+              entry.avatarUrl = `https://q.qlogo.cn/headimg_dl?dst_uin=${entry.userId}&spec=640`
+            }
+
+            // 尝试获取群成员信息
+            if (session.bot?.getGuildMember) {
+              try {
+                const member = await session.bot.getGuildMember(session.guildId, entry.userId)
+                entry.username = member.nick || member.name || member.user?.name || entry.userId
+                if (!entry.avatarUrl) {
+                  entry.avatarUrl = member.user?.avatar || ''
+                }
+              } catch {
+                // 忽略获取失败
+              }
+            }
+          } catch {
+            // 忽略用户信息获取失败
+          }
+        }
+
+        // 生成卡片
+        const result = await generateSleepLeaderboardCard(ctx, config, entries, session.guildId)
+
+        // 返回图片
+        const base64 = result.buffer.toString('base64')
+        return segment.image(`base64://${base64}`)
+      } catch (e) {
+        ctx.logger('pig').error('Failed to generate sleep leaderboard:', e)
+        return `生成熬夜王榜失败: ${e}`
+      }
+    })
+
   ctx.middleware(async (session, next) => {
     // 如果没有开启实验性自动检测功能，直接跳过
     if (!config.experimentalAutoDetect) return next()
@@ -240,9 +352,11 @@ export function apply(ctx: Context, config: Config) {
         await ctx.database.upsert('pig_user_state', [{
           userId: session.userId,
           platform: session.platform,
+          guildId: session.guildId || '',
           lastWakeUp: nowDate,
           lastSunrise: sunriseInfo.sunrise,
-        }], ['platform', 'userId'])
+          abnormalCount: userState?.abnormalCount ?? 0,
+        }], ['platform', 'userId', 'guildId'])
 
         // This is the first message of the day
         if (userState?.lastWakeUp) {
@@ -251,6 +365,14 @@ export function apply(ctx: Context, config: Config) {
           if (diffHours > config.abnormalThreshold) {
             // 设置锁定，防止重复触发
             travelLocks.set(lockKey, now)
+
+            // 递增作息异常次数
+            await ctx.database.upsert('pig_user_state', [{
+              userId: session.userId,
+              platform: session.platform,
+              guildId: session.guildId || '',
+              abnormalCount: (userState?.abnormalCount ?? 0) + 1,
+            }], ['platform', 'userId', 'guildId'])
 
             // Trigger Travel Sequence
             await session.send(`检测到 ${segment.at(session.userId)} 作息异常（差异: ${diffHours.toFixed(1)}小时），准备虚拟旅行...`)
@@ -261,7 +383,7 @@ export function apply(ctx: Context, config: Config) {
               avatarUrl: session.author?.avatar || ''
             }
 
-            const result = await triggerTravelSequence(ctx, config, userInfo, session.platform)
+            const result = await triggerTravelSequence(ctx, config, userInfo, session.platform, session.guildId || '')
             await session.send(formatTravelMessage(result, session.userId, config))
           }
         }
