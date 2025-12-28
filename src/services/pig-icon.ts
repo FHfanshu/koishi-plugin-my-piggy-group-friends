@@ -1,13 +1,24 @@
+import { existsSync } from 'fs'
 import { access, copyFile, mkdir, readdir, readFile } from 'fs/promises'
 import { dirname, join } from 'path'
-import { fileURLToPath } from 'url'
 
 let cachedSvgFiles: string[] | null = null
 let pigSvgDirOverride: string | null = null
 
+function findPigSvgDir(startDir: string): string | null {
+  let current = startDir
+  for (let i = 0; i < 6; i++) {
+    const candidate = join(current, 'pig_svgs')
+    if (existsSync(candidate)) return candidate
+    const parent = dirname(current)
+    if (parent === current) break
+    current = parent
+  }
+  return null
+}
+
 function getPackageSvgDir(): string {
-  const baseDir = dirname(fileURLToPath(import.meta.url))
-  return join(baseDir, '..', '..', 'pig_svgs')
+  return findPigSvgDir(__dirname) ?? join(__dirname, 'pig_svgs')
 }
 
 export function setPigSvgDir(dir: string) {
@@ -19,6 +30,10 @@ async function getPigSvgFiles(): Promise<string[]> {
   if (cachedSvgFiles) return cachedSvgFiles
   try {
     const svgDir = pigSvgDirOverride || getPackageSvgDir()
+    if (!existsSync(svgDir)) {
+      cachedSvgFiles = []
+      return cachedSvgFiles
+    }
     const entries = await readdir(svgDir)
     cachedSvgFiles = entries
       .filter(name => name.toLowerCase().endsWith('.svg'))
@@ -31,8 +46,9 @@ async function getPigSvgFiles(): Promise<string[]> {
 
 export async function getRandomPigSvgDataUrl(): Promise<string | null> {
   const files = await getPigSvgFiles()
-  if (!files.length) return null
-  const pick = files[Math.floor(Math.random() * files.length)]
+  const filtered = files.filter(file => !file.toLowerCase().endsWith('owl.svg'))
+  if (!filtered.length) return null
+  const pick = filtered[Math.floor(Math.random() * filtered.length)]
   try {
     const buffer = await readFile(pick)
     return `data:image/svg+xml;base64,${buffer.toString('base64')}`
@@ -44,6 +60,7 @@ export async function getRandomPigSvgDataUrl(): Promise<string | null> {
 export async function getPigSvgDataUrlByName(filename: string): Promise<string | null> {
   try {
     const baseDir = pigSvgDirOverride || getPackageSvgDir()
+    if (!existsSync(baseDir)) return null
     const svgPath = join(baseDir, filename)
     const buffer = await readFile(svgPath)
     return `data:image/svg+xml;base64,${buffer.toString('base64')}`
@@ -54,6 +71,7 @@ export async function getPigSvgDataUrlByName(filename: string): Promise<string |
 
 export async function ensurePigSvgAssets(targetDir: string): Promise<void> {
   const sourceDir = getPackageSvgDir()
+  if (!existsSync(sourceDir)) return
   await mkdir(targetDir, { recursive: true })
   const entries = await readdir(sourceDir)
   for (const name of entries) {

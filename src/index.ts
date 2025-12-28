@@ -45,9 +45,28 @@ export function apply(ctx: Context, config: Config) {
   ctx.logger('pig').info('my-pig-group-friends plugin is loading...')
   applyDatabase(ctx)
   const dataRoot = resolve(ctx.baseDir ?? process.cwd(), 'data', 'pig', 'svgs')
-  ensurePigSvgAssets(dataRoot)
-    .then(() => setPigSvgDir(dataRoot))
-    .catch((e) => ctx.logger('pig').warn(`Failed to prepare pig svg assets: ${e}`))
+  const cwdRoot = resolve(process.cwd(), 'data', 'pig', 'svgs')
+  const parentRoot = resolve(process.cwd(), '..', 'data', 'pig', 'svgs')
+  const parent2Root = resolve(process.cwd(), '..', '..', 'data', 'pig', 'svgs')
+  const svgDirCandidates = [dataRoot, cwdRoot, parentRoot, parent2Root]
+  const detectSvgDir = async () => {
+    for (const dir of svgDirCandidates) {
+      try {
+        const entries = await fs.readdir(dir)
+        if (entries.some(name => name.toLowerCase().endsWith('.svg'))) {
+          setPigSvgDir(dir)
+          ctx.logger('pig').info(`Pig SVG dir detected: ${dir}`)
+          return
+        }
+      } catch {
+        // ignore missing dir
+      }
+    }
+    setPigSvgDir(dataRoot)
+    await ensurePigSvgAssets(dataRoot)
+    ctx.logger('pig').info(`Pig SVG dir prepared: ${dataRoot}`)
+  }
+  detectSvgDir().catch((e) => ctx.logger('pig').warn(`Failed to prepare pig svg assets: ${e}`))
 
   // 检查存储服务状态
   if (config.useStorageService && !ctx.chatluna_storage) {
