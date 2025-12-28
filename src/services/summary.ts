@@ -1,6 +1,8 @@
 import { Context } from 'koishi'
+import { promises as fs } from 'fs'
 import { Config } from '../config'
 import { PigTravelLog } from '../database'
+import { getRandomPigSvgDataUrl } from './pig-icon'
 
 export interface MonthlySummaryData {
   userId: string
@@ -13,6 +15,7 @@ export interface MonthlySummaryData {
   totalTrips: number
   countriesVisited: string[]
   locationsVisited: string[]
+  backgroundImage?: string
 }
 
 export interface SummaryCardResult {
@@ -116,8 +119,34 @@ export async function generateMonthlySummaryCard(
   config: Config,
   data: MonthlySummaryData
 ): Promise<SummaryCardResult> {
-  const { year, month, logs, username, totalTrips, countriesVisited, locationsVisited } = data
+  const { year, month, logs, username, totalTrips, countriesVisited, locationsVisited, backgroundImage } = data
   let { avatarUrl } = data
+
+  // 默认占位符背景
+  const defaultBgUrl = 'https://images.unsplash.com/photo-1507525428034-b723cf961d3e?q=80&w=2073&auto=format&fit=crop'
+
+  // 处理背景图片：如果是本地文件，转换为 base64
+  let bgUrl = defaultBgUrl
+  if (backgroundImage) {
+    if (backgroundImage.startsWith('file://')) {
+      try {
+        const filePath = backgroundImage.replace('file://', '')
+        const buffer = await fs.readFile(filePath)
+        // 根据文件扩展名确定 MIME 类型
+        let mimeType = 'image/png'
+        if (filePath.endsWith('.jpg') || filePath.endsWith('.jpeg')) mimeType = 'image/jpeg'
+        else if (filePath.endsWith('.gif')) mimeType = 'image/gif'
+        else if (filePath.endsWith('.webp')) mimeType = 'image/webp'
+        bgUrl = `data:${mimeType};base64,${buffer.toString('base64')}`
+        if (config.debug) ctx.logger('pig').debug(`Loaded local background: ${filePath}`)
+      } catch (e) {
+        ctx.logger('pig').warn(`Failed to load local background: ${e}`)
+        // 使用默认背景
+      }
+    } else {
+      bgUrl = backgroundImage
+    }
+  }
 
   // 预取头像并转换为 base64（解决 QQ 头像跨域问题）
   if (avatarUrl && avatarUrl.startsWith('http')) {
@@ -145,6 +174,13 @@ export async function generateMonthlySummaryCard(
   // 月份名称
   const monthNames = ['一月', '二月', '三月', '四月', '五月', '六月', '七月', '八月', '九月', '十月', '十一月', '十二月']
   const monthName = monthNames[month - 1]
+  const pigSvg = await getRandomPigSvgDataUrl()
+  const pigTitle = pigSvg
+    ? `<img class="pig-emoji pig-emoji--title" src="${pigSvg}" alt="pig" />`
+    : '<span class="pig-emoji-fallback">🐷</span>'
+  const pigEmpty = pigSvg
+    ? `<img class="pig-emoji pig-emoji--empty" src="${pigSvg}" alt="pig" />`
+    : '<span class="pig-emoji-fallback">🐷</span>'
 
   // 生成旅行足迹列表 HTML
   const tripsHtml = logs.slice(0, 12).map((log, index) => {
@@ -153,11 +189,13 @@ export async function generateMonthlySummaryCard(
     const tz = formatTimezone(log.timezone)
     return `
       <div class="trip-item">
-        <div class="trip-index">${index + 1}</div>
-        <div class="trip-info">
-          <div class="trip-location">${escapeHtml(log.locationZh || log.location)}</div>
-          <div class="trip-country">${escapeHtml(log.countryZh || log.country)} · ${dayStr}</div>
-          <div class="trip-location-en">${escapeHtml(log.location)}</div>
+        <div class="trip-index">#${String(index + 1).padStart(2, '0')}</div>
+        <div class="trip-content">
+          <div class="trip-loc">${escapeHtml(log.locationZh || log.location)}</div>
+          <div class="trip-meta">
+            <span class="trip-tag">${escapeHtml(log.countryZh || log.country)}</span>
+            <span>${dayStr}</span>
+          </div>
         </div>
         <div class="trip-tz">${tz}</div>
       </div>
@@ -166,29 +204,8 @@ export async function generateMonthlySummaryCard(
 
   // 如果超过12条，显示省略
   const moreTripsHtml = logs.length > 12
-    ? `<div class="more-trips">... 还有 ${logs.length - 12} 次旅行</div>`
+    ? `<div class="more-trips">... And ${logs.length - 12} more journeys ...</div>`
     : ''
-
-  // 统计数据
-  const statsHtml = `
-    <div class="stats-grid">
-      <div class="stat-item bg-yellow">
-        <div class="stat-value">${totalTrips}</div>
-        <div class="stat-label">次旅行</div>
-        <div class="deco-dot"></div>
-      </div>
-      <div class="stat-item bg-pink">
-        <div class="stat-value">${countriesVisited.length}</div>
-        <div class="stat-label">个国家</div>
-        <div class="deco-line"></div>
-      </div>
-      <div class="stat-item bg-cyan">
-        <div class="stat-value">${locationsVisited.length}</div>
-        <div class="stat-label">个地点</div>
-        <div class="deco-triangle"></div>
-      </div>
-    </div>
-  `
 
   const html = `
 <!DOCTYPE html>
@@ -196,7 +213,7 @@ export async function generateMonthlySummaryCard(
 <head>
 <meta charset="UTF-8">
 <style>
-  @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;700;900&display=swap');
+  @import url('https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@400;700;900&family=Noto+Sans+SC:wght@300;400;700&display=swap');
 
   * {
     margin: 0;
@@ -207,407 +224,444 @@ export async function generateMonthlySummaryCard(
   body {
     width: 1080px;
     min-height: 1920px;
-    font-family: "Noto Sans SC", sans-serif, "Noto Color Emoji";
-    background-color: #F0F0F0;
-    background-image:
-      radial-gradient(#000 10%, transparent 11%),
-      radial-gradient(#000 10%, transparent 11%);
-    background-size: 30px 30px;
-    background-position: 0 0, 15px 15px;
-    background-color: #FFDEE9;
-    padding: 60px;
-  }
-
-  .twemoji {
-    font-family: "Twemoji", "Noto Color Emoji", sans-serif;
+    font-family: "Noto Sans SC", sans-serif;
+    background-color: #F7F5F2; /* 纸张米色 */
+    color: #1A1A1A;
+    padding: 0;
   }
 
   .container {
-    background: #fff;
-    border: 4px solid #000;
-    box-shadow: 20px 20px 0 #000;
-    padding: 60px;
+    padding: 80px;
     position: relative;
-    overflow: hidden;
+    background: #F7F5F2; /* 默认纸张米色，会被自定义背景覆盖 */
+    min-height: 1920px;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden; /* 防止背景溢出 */
   }
 
-  /* Memphis decorative elements */
-  .deco-shape-1 {
+  /* 自定义背景层 */
+  .custom-bg {
     position: absolute;
-    top: -20px;
-    right: -20px;
-    width: 150px;
-    height: 150px;
-    background: #FFD700;
-    border: 4px solid #000;
-    border-radius: 50%;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
     z-index: 0;
+    opacity: 0.15; /* 降低不透明度作为背景纹理 */
+    background-image: url('${bgUrl}');
+    background-size: cover;
+    background-position: center;
+    filter: grayscale(100%); /* 默认黑白，保持杂志格调 */
+    pointer-events: none;
   }
 
-  .deco-shape-2 {
-    position: absolute;
-    bottom: 40px;
-    left: -30px;
-    width: 100px;
-    height: 100px;
-    background: #00CED1;
-    border: 4px solid #000;
-    transform: rotate(45deg);
-    z-index: 0;
+  /* 杂志顶部条形码/期号区域 */
+  .magazine-meta {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-end;
+    border-bottom: 4px solid #1A1A1A;
+    padding-bottom: 20px;
+    margin-bottom: 60px;
+    position: relative;
+    z-index: 2;
   }
 
-  .header {
+  .issue-no {
+    font-family: "Noto Serif SC", serif;
+    font-size: 24px;
+    font-weight: 700;
+    font-style: italic;
+  }
+
+  .meta-date {
+    font-size: 18px;
+    font-weight: 400;
+    text-transform: uppercase;
+    letter-spacing: 2px;
+  }
+
+  /* 标题区域 */
+  .title-section {
+    margin-bottom: 80px;
+    position: relative;
+    z-index: 2;
+  }
+
+  .main-title {
+    font-family: "Noto Serif SC", serif;
+    font-size: 160px;
+    font-weight: 900;
+    line-height: 0.9;
+    letter-spacing: -5px;
+    color: #1A1A1A;
+    margin-left: -10px;
+  }
+
+  .pig-emoji {
+    display: inline-block;
+    width: 1em;
+    height: 1em;
+    vertical-align: -0.12em;
+    object-fit: contain;
+  }
+
+  .pig-emoji--title {
+    width: 0.65em;
+    height: 0.65em;
+  }
+
+  .pig-emoji--empty {
+    width: 110px;
+    height: 110px;
+  }
+
+  .pig-emoji-fallback {
+    font-family: "Noto Color Emoji", "Apple Color Emoji", "Segoe UI Emoji", sans-serif;
+    vertical-align: -0.08em;
+  }
+
+  .sub-title {
+    font-size: 32px;
+    font-weight: 300;
+    text-transform: uppercase;
+    letter-spacing: 12px;
+    margin-top: 10px;
+    color: #666;
     display: flex;
     align-items: center;
-    gap: 32px;
-    margin-bottom: 48px;
-    position: relative;
-    z-index: 1;
-    background: #fff;
-    border: 4px solid #000;
-    padding: 24px;
-    box-shadow: 8px 8px 0 #000;
+    gap: 20px;
   }
 
-  .avatar-ring {
-    padding: 0;
-    border: 4px solid #000;
-    border-radius: 50%;
-    overflow: hidden;
-    background: #FF69B4;
+  .sub-title::after {
+    content: "";
+    flex: 1;
+    height: 2px;
+    background: #1A1A1A;
+  }
+
+  /* 用户档案卡片 - 杂志专栏风格 */
+  .profile-section {
+    display: flex;
+    gap: 60px;
+    margin-bottom: 80px;
+    align-items: flex-start;
+  }
+
+  .avatar-frame {
+    width: 200px;
+    height: 200px;
+    border: 1px solid #1A1A1A;
+    padding: 10px;
+    background: #fff;
+    transform: rotate(-3deg);
+    box-shadow: 15px 15px 0 rgba(0,0,0,0.1);
   }
 
   .avatar {
-    width: 120px;
-    height: 120px;
+    width: 100%;
+    height: 100%;
     object-fit: cover;
-    display: block;
+    /* filter: grayscale(20%) contrast(1.1); */
   }
 
-  .user-info {
+  .user-details {
     flex: 1;
+    padding-top: 10px;
   }
 
   .username {
-    font-size: 48px;
-    font-weight: 900;
-    color: #000;
-    margin-bottom: 8px;
-    text-transform: uppercase;
-    letter-spacing: -1px;
-  }
-
-  .period {
-    font-size: 28px;
-    color: #000;
+    font-family: "Noto Serif SC", serif;
+    font-size: 64px;
     font-weight: 700;
-    background: #00CED1;
-    display: inline-block;
-    padding: 4px 12px;
-    border: 3px solid #000;
-    box-shadow: 4px 4px 0 #000;
-  }
-
-  .title-section {
-    text-align: center;
-    margin-bottom: 48px;
-    position: relative;
-    z-index: 1;
-    border-bottom: 4px solid #000;
-    padding-bottom: 24px;
-  }
-
-  .title {
-    font-size: 80px;
-    font-weight: 900;
-    color: #000;
     margin-bottom: 16px;
-    text-shadow: 6px 6px 0 #FF69B4;
+    letter-spacing: -1px;
+    line-height: 1.1;
+  }
+
+  .user-role {
+    font-size: 20px;
+    text-transform: uppercase;
     letter-spacing: 4px;
-  }
-
-  .subtitle {
-    font-size: 32px;
-    color: #000;
-    font-weight: 700;
-    background: #FFD700;
+    color: #fff;
+    background: #1A1A1A;
     display: inline-block;
-    padding: 8px 24px;
-    border: 3px solid #000;
-    box-shadow: 6px 6px 0 #000;
-    transform: rotate(-2deg);
+    padding: 8px 16px;
+    font-weight: 700;
   }
 
+  /* 数据统计网格 - 极简主义 */
   .stats-grid {
-    display: flex;
-    justify-content: space-between;
-    margin-bottom: 48px;
-    gap: 24px;
-    position: relative;
-    z-index: 1;
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 40px;
+    margin-bottom: 80px;
+    border-top: 2px solid #1A1A1A;
+    border-bottom: 2px solid #1A1A1A;
+    padding: 60px 0;
   }
 
   .stat-item {
     text-align: center;
-    flex: 1;
-    padding: 32px 16px;
-    border: 4px solid #000;
-    box-shadow: 12px 12px 0 #000;
     position: relative;
-    overflow: hidden;
   }
 
-  .bg-yellow { background: #FFD700; }
-  .bg-pink { background: #FF69B4; }
-  .bg-cyan { background: #00CED1; }
+  .stat-item:not(:last-child)::after {
+    content: "";
+    position: absolute;
+    right: 0;
+    top: 20%;
+    height: 60%;
+    width: 1px;
+    background: #ccc;
+  }
 
   .stat-value {
-    font-size: 72px;
-    font-weight: 900;
-    color: #000;
+    font-family: "Noto Serif SC", serif;
+    font-size: 100px;
+    font-weight: 400;
     line-height: 1;
-    position: relative;
-    z-index: 2;
+    margin-bottom: 16px;
+    color: #1A1A1A;
   }
+
+  .stat-value.highlight-pink { color: #FF9AA2; }
+  .stat-value.highlight-blue { color: #A0C4FF; }
+  .stat-value.highlight-yellow { color: #FFDAC1; }
 
   .stat-label {
-    font-size: 24px;
-    color: #000;
-    margin-top: 8px;
-    font-weight: 700;
+    font-size: 18px;
     text-transform: uppercase;
-    position: relative;
-    z-index: 2;
+    letter-spacing: 3px;
+    color: #888;
+    font-weight: 700;
   }
 
+  /* 旅行列表 - 目录风格 */
   .trips-section {
-    margin-bottom: 32px;
-    position: relative;
-    z-index: 1;
+    flex: 1;
+  }
+
+  .section-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    margin-bottom: 40px;
+    border-bottom: 1px solid #1A1A1A;
+    padding-bottom: 15px;
   }
 
   .section-title {
-    font-size: 36px;
-    font-weight: 900;
-    color: #000;
-    margin-bottom: 24px;
-    padding: 12px 24px;
-    border: 4px solid #000;
-    display: inline-block;
-    background: #fff;
-    box-shadow: 8px 8px 0 #000;
+    font-family: "Noto Serif SC", serif;
+    font-size: 40px;
+    font-weight: 700;
+  }
+
+  .section-subtitle {
+    font-size: 18px;
+    color: #888;
+    font-style: italic;
+    font-family: "Noto Serif SC", serif;
   }
 
   .trips-list {
     display: flex;
     flex-direction: column;
-    gap: 20px;
+    gap: 0;
   }
 
   .trip-item {
-    display: flex;
+    display: grid;
+    grid-template-columns: 80px 1fr auto;
+    gap: 24px;
+    padding: 24px 0;
+    border-bottom: 1px dashed #ccc;
     align-items: center;
-    gap: 20px;
-    padding: 20px 24px;
-    background: #fff;
-    border: 3px solid #000;
-    box-shadow: 8px 8px 0 #000;
-    transition: transform 0.2s;
-    position: relative;
-    overflow: hidden;
-  }
-
-  .trip-item:nth-child(odd) {
-    transform: rotate(0.5deg);
-  }
-
-  .trip-item:nth-child(even) {
-    transform: rotate(-0.5deg);
   }
 
   .trip-index {
-    width: 48px;
-    height: 48px;
-    background: #000;
-    color: #fff;
-    border-radius: 0;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 24px;
-    font-weight: 700;
-    flex-shrink: 0;
-    box-shadow: 4px 4px 0 #FF69B4;
-    position: relative;
-    z-index: 2;
-  }
-
-  .trip-info {
-    flex: 1;
-    position: relative;
-    z-index: 2;
-  }
-
-  .trip-location {
-    font-size: 28px;
-    font-weight: 800;
-    color: #000;
-    margin-bottom: 4px;
-  }
-
-  .trip-location-en {
-    position: absolute;
-    right: 120px;
-    bottom: -10px;
-    font-size: 16px;
-    font-weight: 900;
-    color: rgba(0,0,0,0.08);
-    text-transform: uppercase;
-    letter-spacing: 1px;
-    pointer-events: none;
-    white-space: nowrap;
+    font-family: "Noto Serif SC", serif;
+    font-size: 32px;
     font-style: italic;
-    z-index: 1;
+    color: #ccc;
   }
 
-  .trip-country {
-    font-size: 22px;
-    color: #000;
-    font-weight: 500;
-    background: #eee;
-    display: inline-block;
-    padding: 2px 8px;
-    border: 2px solid #000;
+  .trip-content {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .trip-loc {
+    font-size: 32px;
+    font-weight: 700;
+    color: #1A1A1A;
+  }
+
+  .trip-meta {
+    font-size: 16px;
+    color: #666;
+    display: flex;
+    gap: 16px;
+    align-items: center;
+  }
+
+  .trip-tag {
+    background: #E0D8D0;
+    padding: 4px 10px;
+    font-size: 14px;
+    border-radius: 2px;
+    font-weight: 700;
+    color: #444;
   }
 
   .trip-tz {
-    font-size: 18px;
-    font-weight: 700;
-    color: #000;
-    background: #FFD700;
-    padding: 6px 12px;
-    border: 2px solid #000;
-    box-shadow: 3px 3px 0 #000;
-    flex-shrink: 0;
+    font-family: monospace;
+    font-size: 16px;
+    color: #888;
+    border: 1px solid #ccc;
+    padding: 4px 8px;
   }
 
   .more-trips {
     text-align: center;
-    padding: 20px;
-    color: #000;
-    font-size: 24px;
-    font-weight: 700;
-    background: #fff;
-    border: 3px dashed #000;
-    margin-top: 10px;
+    padding: 40px;
+    font-style: italic;
+    color: #888;
+    font-family: "Noto Serif SC", serif;
+    font-size: 20px;
   }
 
+  /* 底部品牌区 */
   .footer {
+    margin-top: auto;
+    padding-top: 60px;
     display: flex;
     justify-content: space-between;
-    align-items: center;
-    margin-top: 60px;
-    padding-top: 32px;
-    border-top: 6px solid #000;
-    position: relative;
-    z-index: 1;
+    align-items: flex-end;
   }
 
-  .brand {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-  }
-
-  .brand-icon {
+  .brand-logo {
+    font-family: "Noto Serif SC", serif;
     font-size: 40px;
-    background: #FF69B4;
-    border: 3px solid #000;
-    padding: 4px;
-    line-height: 1;
-    box-shadow: 4px 4px 0 #000;
-  }
-
-  .brand-name {
-    font-size: 32px;
     font-weight: 900;
-    text-transform: uppercase;
-    color: #000;
-    font-style: italic;
+    letter-spacing: -1px;
+    border: 4px solid #1A1A1A;
+    padding: 10px 20px;
   }
 
-  .generated-at {
-    font-size: 20px;
-    color: #000;
-    font-weight: 600;
-    background: #fff;
-    padding: 4px 12px;
-    border: 2px solid #000;
+  .barcode {
+    height: 50px;
+    width: 240px;
+    background: repeating-linear-gradient(
+      90deg,
+      #1A1A1A 0px,
+      #1A1A1A 2px,
+      transparent 2px,
+      transparent 4px,
+      #1A1A1A 4px,
+      #1A1A1A 8px,
+      transparent 8px,
+      transparent 9px
+    );
+  }
+
+  /* 装饰背景字 */
+  .bg-text {
+    position: absolute;
+    top: 45%;
+    right: -100px;
+    transform: rotate(90deg);
+    font-size: 300px;
+    font-weight: 900;
+    color: rgba(0,0,0,0.03);
+    z-index: 0;
+    pointer-events: none;
+    white-space: nowrap;
+    font-family: "Noto Serif SC", serif;
   }
 
   .empty-state {
     text-align: center;
-    padding: 80px 40px;
-    border: 4px dashed #000;
-    background: #fff;
-    margin: 40px 0;
+    padding: 120px 0;
+    color: #888;
   }
 
   .empty-icon {
-    font-size: 80px;
-    margin-bottom: 24px;
+    font-size: 100px;
+    margin-bottom: 40px;
+    opacity: 0.5;
   }
 
   .empty-text {
     font-size: 32px;
-    font-weight: 700;
-    color: #000;
+    font-family: "Noto Serif SC", serif;
   }
 </style>
 </head>
 <body>
-  <div class="deco-shape-1"></div>
-  <div class="deco-shape-2"></div>
-
   <div class="container">
-    <div class="header">
-      <div class="avatar-ring">
-        <img class="avatar" src="${avatarUrl || 'https://ui-avatars.com/api/?name=U&background=667eea&color=fff'}" onerror="this.src='https://ui-avatars.com/api/?name=U&background=667eea&color=fff'" />
-      </div>
-      <div class="user-info">
-        <div class="username">${escapeHtml(username)}</div>
-        <div class="period">${year}年${monthName} 总结</div>
-      </div>
+    <div class="custom-bg"></div>
+    <div class="bg-text">JOURNEY</div>
+
+    <div class="magazine-meta">
+      <div class="issue-no">VOL.${year}.${month.toString().padStart(2, '0')}</div>
+      <div class="meta-date">${new Date().toLocaleDateString('en-US', { month: 'long', year: 'numeric' }).toUpperCase()}</div>
     </div>
 
     <div class="title-section">
-      <div class="title">猪猪月报</div>
-      <div class="subtitle">PIG MONTHLY SUMMARY</div>
+      <div class="sub-title">MONTHLY REPORT</div>
+      <div class="main-title">SUMMARY ${pigTitle}</div>
+    </div>
+
+    <div class="profile-section">
+      <div class="avatar-frame">
+        <img class="avatar" src="${avatarUrl || 'https://ui-avatars.com/api/?name=U&background=333&color=fff'}" onerror="this.src='https://ui-avatars.com/api/?name=U&background=333&color=fff'" />
+      </div>
+      <div class="user-details">
+        <div class="username">${escapeHtml(username)}</div>
+        <div class="user-role">TRAVELER / ${year}年${monthName}</div>
+      </div>
     </div>
 
     ${totalTrips > 0 ? `
-      ${statsHtml}
+    <div class="stats-grid">
+      <div class="stat-item">
+        <div class="stat-value highlight-yellow">${totalTrips}</div>
+        <div class="stat-label">TRIPS</div>
+      </div>
+      <div class="stat-item">
+        <div class="stat-value highlight-pink">${countriesVisited.length}</div>
+        <div class="stat-label">COUNTRIES</div>
+      </div>
+      <div class="stat-item">
+        <div class="stat-value highlight-blue">${locationsVisited.length}</div>
+        <div class="stat-label">LOCATIONS</div>
+      </div>
+    </div>
 
-      <div class="trips-section">
-        <div class="section-title">本月足迹 TRACKS</div>
-        <div class="trips-list">
-          ${tripsHtml}
-          ${moreTripsHtml}
-        </div>
+    <div class="trips-section">
+      <div class="section-header">
+        <div class="section-title">Travel Log</div>
+        <div class="section-subtitle">Record of your journey</div>
       </div>
+
+      <div class="trips-list">
+        ${tripsHtml}
+        ${moreTripsHtml}
+      </div>
+    </div>
     ` : `
-      <div class="empty-state">
-        <div class="empty-icon"><span class="twemoji">🐷</span></div>
-        <div class="empty-text">这个月还没有旅行记录哦~</div>
-      </div>
+    <div class="empty-state">
+      <div class="empty-icon">${pigEmpty}</div>
+      <div class="empty-text">No travel records this month.</div>
+    </div>
     `}
 
     <div class="footer">
-      <div class="brand">
-        <div class="brand-icon"><span class="twemoji">🐷</span></div>
-        <div class="brand-name">Pig Travel</div>
-      </div>
-      <div class="generated-at">${new Date().toLocaleDateString('zh-CN')}</div>
+      <div class="barcode"></div>
+      <div class="brand-logo">PIG TRAVEL</div>
     </div>
   </div>
 
@@ -643,9 +697,9 @@ export async function generateMonthlySummaryCard(
 
     // 动态高度
     const baseHeight = 1200
-    const tripHeight = Math.min(logs.length, 12) * 90
-    const extraHeight = logs.length > 12 ? 60 : 0
-    const totalHeight = baseHeight + tripHeight + extraHeight + (logs.length === 0 ? 200 : 0)
+    const tripHeight = Math.min(logs.length, 12) * 110
+    const extraHeight = logs.length > 12 ? 80 : 0
+    const totalHeight = baseHeight + tripHeight + extraHeight + (logs.length === 0 ? 0 : 0)
 
     await page.setViewport({ width: 1080, height: Math.max(1920, totalHeight), deviceScaleFactor: 1 })
     await page.setContent(html, { waitUntil: 'domcontentloaded' })
@@ -682,7 +736,8 @@ export async function prepareMonthlySummary(
   username: string,
   avatarUrl: string,
   year: number,
-  month: number
+  month: number,
+  guildId?: string
 ): Promise<MonthlySummaryData> {
   const logs = await getMonthlyLogs(ctx, userId, platform, year, month)
 
@@ -692,6 +747,17 @@ export async function prepareMonthlySummary(
   for (const log of logs) {
     countriesSet.add(log.country)
     locationsSet.add(log.location)
+  }
+
+  // 获取用户自定义背景
+  let backgroundImage: string | undefined
+  if (guildId) {
+    const [userState] = await ctx.database.get('pig_user_state', {
+      userId,
+      platform,
+      guildId,
+    })
+    backgroundImage = userState?.backgroundImage
   }
 
   return {
@@ -704,7 +770,8 @@ export async function prepareMonthlySummary(
     logs,
     totalTrips: logs.length,
     countriesVisited: Array.from(countriesSet),
-    locationsVisited: Array.from(locationsSet)
+    locationsVisited: Array.from(locationsSet),
+    backgroundImage
   }
 }
 

@@ -1,4 +1,6 @@
-import { Context, segment } from 'koishi'
+import { Context, segment, h } from 'koishi'
+import { promises as fs } from 'fs'
+import { join, resolve } from 'path'
 import {} from 'koishi-plugin-cron'
 import {} from 'koishi-plugin-glyph'
 import './types'
@@ -8,6 +10,7 @@ import { getSunriseInfo } from './services/sunrise'
 import { triggerTravelSequence, TravelResult, UserInfo } from './services/travel'
 import { prepareMonthlySummary, generateMonthlySummaryCard, getUsersWithLogsInMonth } from './services/summary'
 import { getPigLeaderboard, getSleepLeaderboard, generatePigLeaderboardCard, generateSleepLeaderboardCard } from './services/leaderboard'
+import { ensurePigSvgAssets, setPigSvgDir } from './services/pig-icon'
 
 export const name = 'my-pig-group-friends'
 export const inject = {
@@ -41,6 +44,10 @@ function formatTravelMessage(result: TravelResult, userId: string, config: Confi
 export function apply(ctx: Context, config: Config) {
   ctx.logger('pig').info('my-pig-group-friends plugin is loading...')
   applyDatabase(ctx)
+  const dataRoot = resolve(ctx.baseDir ?? process.cwd(), 'data', 'pig', 'svgs')
+  ensurePigSvgAssets(dataRoot)
+    .then(() => setPigSvgDir(dataRoot))
+    .catch((e) => ctx.logger('pig').warn(`Failed to prepare pig svg assets: ${e}`))
 
   // 检查存储服务状态
   if (config.useStorageService && !ctx.chatluna_storage) {
@@ -121,9 +128,9 @@ export function apply(ctx: Context, config: Config) {
     })
 
   // 月度总结调试命令
-  ctx.command('pig.summary [year:number] [month:number]', '生成月度旅行总结（调试用）')
+  ctx.command('pig.summary [year:number] [month:number] [user:user]', '生成月度旅行总结')
     .option('all', '-a 生成所有用户的总结')
-    .action(async ({ session, options }, yearArg, monthArg) => {
+    .action(async ({ session, options }, yearArg, monthArg, targetUser) => {
       const now = new Date()
       // 默认为上个月
       let year = yearArg ?? now.getFullYear()
@@ -140,6 +147,22 @@ export function apply(ctx: Context, config: Config) {
       // 验证月份范围
       if (month < 1 || month > 12) {
         return '月份必须在 1-12 之间'
+      }
+
+      // 确定目标用户
+      let targetPlatform = session.platform
+      let targetUserId = session.userId
+
+      if (targetUser) {
+        // 解析 @用户 参数
+        const [platform, userId] = targetUser.split(':')
+        if (userId) {
+          targetPlatform = platform
+          targetUserId = userId
+        } else {
+          // 如果没有 platform: 前缀，直接使用当前 platform
+          targetUserId = platform
+        }
       }
 
       await session.send(`正在生成 ${year}年${month}月 的旅行总结...`)
@@ -173,32 +196,52 @@ export function apply(ctx: Context, config: Config) {
 
           return `已完成 ${users.length} 位用户的月度总结生成`
         } else {
-          // 只生成当前用户的总结
-          const platform = session.platform
-          const userId = session.userId
+          // 生成指定用户的总结
+          let avatarUrl = ''
+          let username = targetUserId
 
-          let avatarUrl = session.author?.avatar || ''
+          // 如果是自己，使用 session 中的信息
+          if (targetUserId === session.userId) {
+            avatarUrl = session.author?.avatar || ''
+            username = session.author?.nickname || session.author?.name || session.username || targetUserId
+          }
 
           // 处理 QQ 头像 - onebot 或 qq 平台
-          if (!avatarUrl && (platform === 'onebot' || platform === 'qq' || platform.includes('qq'))) {
-            avatarUrl = `https://q.qlogo.cn/headimg_dl?dst_uin=${userId}&spec=640`
+          if (!avatarUrl && (targetPlatform === 'onebot' || targetPlatform === 'qq' || targetPlatform.includes('qq'))) {
+            avatarUrl = `https://q.qlogo.cn/headimg_dl?dst_uin=${targetUserId}&spec=640`
+          }
+
+          // 尝试获取目标用户的群成员信息
+          if (targetUserId !== session.userId && session.bot?.getGuildMember && session.guildId) {
+            try {
+              const member = await session.bot.getGuildMember(session.guildId, targetUserId)
+              username = member.nick || member.name || member.user?.name || username
+              if (!avatarUrl) {
+                avatarUrl = member.user?.avatar || ''
+              }
+            } catch (e) {
+              // 忽略获取失败
+              if (config.debug) {
+                ctx.logger('pig').debug(`Failed to get guild member info: ${e}`)
+              }
+            }
           }
 
           const userInfo: UserInfo = {
-            userId,
-            username: session.author?.nickname || session.author?.name || session.username || userId,
+            userId: targetUserId,
+            username,
             avatarUrl
           }
 
           const summaryData = await prepareMonthlySummary(
-            ctx, userId, platform, userInfo.username, userInfo.avatarUrl, year, month
+            ctx, targetUserId, targetPlatform, userInfo.username, userInfo.avatarUrl, year, month, session.guildId
           )
 
           const result = await generateMonthlySummaryCard(ctx, config, summaryData)
 
           // 发送卡片
           const base64 = result.buffer.toString('base64')
-          return `${segment.at(userId)} ${year}年${month}月 旅行总结\n${segment.image(`base64://${base64}`)}`
+          return `${segment.at(targetUserId)} ${year}年${month}月 旅行总结\n${segment.image(`base64://${base64}`)}`
         }
       } catch (e) {
         ctx.logger('pig').error('Failed to generate monthly summary:', e)
@@ -223,6 +266,14 @@ export function apply(ctx: Context, config: Config) {
         if (entries.length === 0) {
           return '本群还没有旅行记录哦~'
         }
+
+        // 获取调用者的自定义背景
+        const [invokerState] = await ctx.database.get('pig_user_state', {
+          userId: session.userId,
+          platform: session.platform,
+          guildId: session.guildId,
+        })
+        const backgroundImage = invokerState?.backgroundImage
 
         // 填充用户信息（昵称和头像）
         for (const entry of entries) {
@@ -250,7 +301,7 @@ export function apply(ctx: Context, config: Config) {
         }
 
         // 生成卡片
-        const result = await generatePigLeaderboardCard(ctx, config, entries, session.guildId)
+        const result = await generatePigLeaderboardCard(ctx, config, entries, session.guildId, backgroundImage)
 
         // 返回图片
         const base64 = result.buffer.toString('base64')
@@ -279,6 +330,14 @@ export function apply(ctx: Context, config: Config) {
           return '本群还没有熬夜记录哦~'
         }
 
+        // 获取调用者的自定义背景
+        const [invokerState] = await ctx.database.get('pig_user_state', {
+          userId: session.userId,
+          platform: session.platform,
+          guildId: session.guildId,
+        })
+        const backgroundImage = invokerState?.backgroundImage
+
         // 填充用户信息（昵称和头像）
         for (const entry of entries) {
           try {
@@ -305,7 +364,7 @@ export function apply(ctx: Context, config: Config) {
         }
 
         // 生成卡片
-        const result = await generateSleepLeaderboardCard(ctx, config, entries, session.guildId)
+        const result = await generateSleepLeaderboardCard(ctx, config, entries, session.guildId, backgroundImage)
 
         // 返回图片
         const base64 = result.buffer.toString('base64')
@@ -313,6 +372,138 @@ export function apply(ctx: Context, config: Config) {
       } catch (e) {
         ctx.logger('pig').error('Failed to generate sleep leaderboard:', e)
         return `生成熬夜王榜失败: ${e}`
+      }
+    })
+
+  // 自定义背景图片
+  ctx.command('pig.bg', '设置/查看自定义背景图片（可直接发送图片或 URL）')
+    .option('reset', '-r 重置为默认背景')
+    .action(async ({ session, options }) => {
+      const platform = session.platform
+      const userId = session.userId
+      const guildId = session.guildId || ''
+
+      // 获取当前用户状态
+      const [userState] = await ctx.database.get('pig_user_state', {
+        userId,
+        platform,
+        guildId,
+      })
+
+      // 重置背景
+      if (options.reset) {
+        if (userState?.backgroundImage) {
+          // 如果是本地文件，尝试删除
+          if (userState.backgroundImage.startsWith('file://')) {
+            try {
+              const filePath = userState.backgroundImage.replace('file://', '')
+              await fs.unlink(filePath)
+              ctx.logger('pig').info(`Deleted background file: ${filePath}`)
+            } catch (e) {
+              ctx.logger('pig').warn(`Failed to delete background file: ${e}`)
+            }
+          }
+          await ctx.database.set('pig_user_state', { userId, platform, guildId }, {
+            backgroundImage: null
+          })
+        }
+        return '已重置为默认背景图片'
+      }
+
+      // 解析消息中的图片
+      const elements = h.parse(session.content || '')
+      const imgElement = elements.find(el => el.type === 'img' || el.type === 'image')
+
+      let imageUrl: string | undefined
+
+      if (imgElement) {
+        // 从图片元素获取 URL
+        imageUrl = imgElement.attrs?.src || imgElement.attrs?.url
+      } else {
+        // 尝试从文本中提取 URL
+        const textContent = elements
+          .filter(el => el.type === 'text')
+          .map(el => el.attrs?.content || '')
+          .join('')
+          .trim()
+
+        if (textContent && (textContent.startsWith('http://') || textContent.startsWith('https://'))) {
+          imageUrl = textContent
+        }
+      }
+
+      // 查看当前背景
+      if (!imageUrl) {
+        if (userState?.backgroundImage) {
+          const bgPath = userState.backgroundImage.startsWith('file://')
+            ? '(本地文件)'
+            : userState.backgroundImage
+          return `当前背景图片: ${bgPath}\n\n发送 "pig.bg" + 图片 设置新背景\n发送 "pig.bg -r" 重置为默认`
+        }
+        return '当前使用默认背景\n\n发送 "pig.bg" + 图片 设置自定义背景\n或发送 "pig.bg <URL>" 使用网络图片'
+      }
+
+      await session.send('正在处理图片...')
+
+      try {
+        // 确保存储目录存在
+        const storagePath = resolve(config.backgroundStoragePath)
+        await fs.mkdir(storagePath, { recursive: true })
+
+        // 下载图片
+        const response = await ctx.http(imageUrl, {
+          responseType: 'arraybuffer',
+          timeout: 30000,
+          headers: {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+          }
+        })
+
+        const buffer = Buffer.from(response.data as ArrayBuffer)
+
+        // 验证是否为图片
+        const contentType = response.headers?.['content-type'] || ''
+        if (contentType && !contentType.includes('image')) {
+          return `下载的内容不是图片（Content-Type: ${contentType}）`
+        }
+
+        // 根据 Content-Type 确定扩展名
+        let ext = '.png'
+        if (contentType.includes('jpeg') || contentType.includes('jpg')) ext = '.jpg'
+        else if (contentType.includes('gif')) ext = '.gif'
+        else if (contentType.includes('webp')) ext = '.webp'
+
+        // 生成文件名
+        const filename = `bg_${platform}_${userId}_${Date.now()}${ext}`
+        const filePath = join(storagePath, filename)
+
+        // 保存文件
+        await fs.writeFile(filePath, buffer)
+        ctx.logger('pig').info(`Background saved: ${filePath}`)
+
+        // 删除旧的本地背景文件（如果有）
+        if (userState?.backgroundImage?.startsWith('file://')) {
+          try {
+            const oldPath = userState.backgroundImage.replace('file://', '')
+            await fs.unlink(oldPath)
+            ctx.logger('pig').info(`Deleted old background: ${oldPath}`)
+          } catch (e) {
+            // 忽略删除失败
+          }
+        }
+
+        // 保存到数据库（使用 file:// 协议标记本地文件）
+        await ctx.database.upsert('pig_user_state', [{
+          userId,
+          platform,
+          guildId,
+          backgroundImage: `file://${filePath}`,
+        }], ['platform', 'userId', 'guildId'])
+
+        return `✅ 背景图片已保存！\n\n新背景将在下次生成 Summary 或排行榜时生效。`
+      } catch (e) {
+        ctx.logger('pig').error(`Failed to save background: ${e}`)
+        return `保存背景图片失败: ${e}`
       }
     })
 
@@ -391,6 +582,79 @@ export function apply(ctx: Context, config: Config) {
     } catch (e) {
       ctx.logger('pig').error('Failed to process wake-up detection:', e)
     }
+
+    return next()
+  })
+
+  // 消息统计 + 熬夜检测中间件
+  ctx.middleware(async (session, next) => {
+    if (!session.userId || !session.content) return next()
+
+    const now = new Date()
+    const currentHour = now.getHours()
+
+    // 获取用户状态
+    const [userState] = await ctx.database.get('pig_user_state', {
+      userId: session.userId,
+      platform: session.platform,
+    })
+
+    // 解析现有的小时消息统计
+    let hourlyCounts: Record<string, number> = {}
+    try {
+      hourlyCounts = userState?.hourlyMessageCounts ? JSON.parse(userState.hourlyMessageCounts) : {}
+    } catch {
+      hourlyCounts = {}
+    }
+
+    // 更新当前小时的消息数
+    const hourKey = currentHour.toString()
+    hourlyCounts[hourKey] = (hourlyCounts[hourKey] || 0) + 1
+
+    // 检查是否在熬夜时段
+    const startHour = config.nightOwlStartHour ?? 0
+    const endHour = config.nightOwlEndHour ?? 5
+
+    let isNightOwlTime = false
+    if (startHour <= endHour) {
+      isNightOwlTime = currentHour >= startHour && currentHour < endHour
+    } else {
+      isNightOwlTime = currentHour >= startHour || currentHour < endHour
+    }
+
+    // 准备更新数据
+    const updateData: any = {
+      userId: session.userId,
+      platform: session.platform,
+      guildId: session.guildId || '',
+      totalMessageCount: (userState?.totalMessageCount ?? 0) + 1,
+      nightMessageCount: (userState?.nightMessageCount ?? 0) + (isNightOwlTime ? 1 : 0),
+      hourlyMessageCounts: JSON.stringify(hourlyCounts),
+    }
+
+    // 如果开启熬夜检测且在熬夜时段
+    if (config.nightOwlEnabled && isNightOwlTime) {
+      const today = new Date(now.getFullYear(), now.getMonth(), now.getDate())
+      const lastNightOwlDate = userState?.lastNightOwlDate
+
+      let alreadyRecordedToday = false
+      if (lastNightOwlDate) {
+        const lastDate = new Date(lastNightOwlDate)
+        const lastDateOnly = new Date(lastDate.getFullYear(), lastDate.getMonth(), lastDate.getDate())
+        alreadyRecordedToday = lastDateOnly.getTime() === today.getTime()
+      }
+
+      if (!alreadyRecordedToday) {
+        updateData.nightOwlCount = (userState?.nightOwlCount ?? 0) + 1
+        updateData.lastNightOwlDate = now
+
+        if (config.debug) {
+          ctx.logger('pig').info(`用户 ${session.userId} 熬夜 +1，当前累计: ${updateData.nightOwlCount} 次`)
+        }
+      }
+    }
+
+    await ctx.database.upsert('pig_user_state', [updateData], ['platform', 'userId', 'guildId'])
 
     return next()
   })

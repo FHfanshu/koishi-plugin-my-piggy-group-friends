@@ -1,6 +1,8 @@
 import { Context } from 'koishi'
+import { promises as fs } from 'fs'
 import { Config } from '../config'
 import { PigTravelLog, PigUserState } from '../database'
+import { getPigSvgDataUrlByName, getRandomPigSvgDataUrl } from './pig-icon'
 
 export interface PigLeaderboardEntry {
   userId: string
@@ -15,7 +17,10 @@ export interface SleepLeaderboardEntry {
   userId: string
   username: string
   avatarUrl: string
-  abnormalCount: number
+  nightOwlCount: number
+  totalMessageCount: number
+  nightMessageCount: number
+  peakHour: number  // 最活跃的小时
 }
 
 export interface LeaderboardData {
@@ -97,16 +102,36 @@ export async function getSleepLeaderboard(
     return []
   }
 
-  // 过滤出有异常记录的用户并排序
+  // 过滤出有熬夜记录的用户并排序
   const entries: SleepLeaderboardEntry[] = states
-    .filter(s => (s.abnormalCount ?? 0) > 0)
-    .map(s => ({
-      userId: s.userId,
-      username: s.userId, // 稍后填充
-      avatarUrl: '',      // 稍后填充
-      abnormalCount: s.abnormalCount ?? 0,
-    }))
-    .sort((a, b) => b.abnormalCount - a.abnormalCount)
+    .filter(s => (s.nightOwlCount ?? 0) > 0)
+    .map(s => {
+      // 解析小时统计找出最活跃时段
+      let peakHour = 0
+      let maxCount = 0
+      try {
+        const hourlyCounts = s.hourlyMessageCounts ? JSON.parse(s.hourlyMessageCounts) : {}
+        for (const [hour, count] of Object.entries(hourlyCounts)) {
+          if ((count as number) > maxCount) {
+            maxCount = count as number
+            peakHour = parseInt(hour)
+          }
+        }
+      } catch {
+        peakHour = 0
+      }
+
+      return {
+        userId: s.userId,
+        username: s.userId, // 稍后填充
+        avatarUrl: '',      // 稍后填充
+        nightOwlCount: s.nightOwlCount ?? 0,
+        totalMessageCount: s.totalMessageCount ?? 0,
+        nightMessageCount: s.nightMessageCount ?? 0,
+        peakHour,
+      }
+    })
+    .sort((a, b) => b.nightOwlCount - a.nightOwlCount)
 
   return entries.slice(0, limit)
 }
@@ -118,44 +143,85 @@ export async function generatePigLeaderboardCard(
   ctx: Context,
   config: Config,
   entries: PigLeaderboardEntry[],
-  guildId: string
+  guildId: string,
+  backgroundImage?: string
 ): Promise<{ buffer: Buffer; filename: string }> {
+  // 默认占位符背景
+  const defaultBgUrl = 'https://images.unsplash.com/photo-1507525428034-b723cf961d3e?q=80&w=2073&auto=format&fit=crop'
+
+  // 处理背景图片：如果是本地文件，转换为 base64
+  let bgUrl = defaultBgUrl
+  if (backgroundImage) {
+    if (backgroundImage.startsWith('file://')) {
+      try {
+        const filePath = backgroundImage.replace('file://', '')
+        const buffer = await fs.readFile(filePath)
+        let mimeType = 'image/png'
+        if (filePath.endsWith('.jpg') || filePath.endsWith('.jpeg')) mimeType = 'image/jpeg'
+        else if (filePath.endsWith('.gif')) mimeType = 'image/gif'
+        else if (filePath.endsWith('.webp')) mimeType = 'image/webp'
+        bgUrl = `data:${mimeType};base64,${buffer.toString('base64')}`
+        if (config.debug) ctx.logger('pig').debug(`Loaded local background for pig rank: ${filePath}`)
+      } catch (e) {
+        ctx.logger('pig').warn(`Failed to load local background: ${e}`)
+      }
+    } else {
+      bgUrl = backgroundImage
+    }
+  }
+
   const rankItemsHtml = entries.map((entry, index) => {
     const rank = index + 1
-    const medalClass = rank <= 3 ? `medal-${rank}` : ''
-    const rankDisplay = rank <= 3 ? ['🥇', '🥈', '🥉'][rank - 1] : rank.toString()
+    const rankDisplay = rank.toString().padStart(2, '0')
+
+    // Spot colors for top 3
+    let rankColorClass = ''
+    if (rank === 1) rankColorClass = 'highlight-yellow'
+    else if (rank === 2) rankColorClass = 'highlight-pink'
+    else if (rank === 3) rankColorClass = 'highlight-blue'
 
     return `
-      <div class="rank-item ${medalClass}">
-        <div class="rank-number">${rankDisplay}</div>
+      <div class="rank-item">
+        <div class="rank-number ${rankColorClass}">${rankDisplay}</div>
         <div class="avatar-container">
-          <img class="avatar" src="${entry.avatarUrl || `https://ui-avatars.com/api/?name=${encodeURIComponent(entry.username.charAt(0))}&background=667eea&color=fff`}"
-               onerror="this.src='https://ui-avatars.com/api/?name=U&background=667eea&color=fff'" />
+          <img class="avatar" src="${entry.avatarUrl || `https://ui-avatars.com/api/?name=${encodeURIComponent(entry.username.charAt(0))}&background=333&color=fff`}"
+               onerror="this.src='https://ui-avatars.com/api/?name=U&background=333&color=fff'" />
         </div>
         <div class="user-info">
           <div class="username">${escapeHtml(entry.username)}</div>
           <div class="stats">
-            <span class="stat-badge bg-yellow">${entry.tripCount} 次旅行</span>
-            <span class="stat-badge bg-cyan">${entry.countryCount} 个国家</span>
+            <span class="stat-main">${entry.tripCount} TRIPS</span>
+            <span class="stat-sub">/ ${entry.countryCount} COUNTRIES</span>
           </div>
         </div>
-        <div class="score">${entry.score}</div>
+        <div class="score-box">
+          <div class="score-label">SCORE</div>
+          <div class="score-value">${entry.score}</div>
+        </div>
       </div>
     `
   }).join('')
 
+  const pigSvg = await getRandomPigSvgDataUrl()
+  const pigIcon = pigSvg
+    ? `<img class="header-icon-img" src="${pigSvg}" alt="pig" />`
+    : '🐷'
+
   const html = generateLeaderboardHtml({
-    title: '猪排行榜',
-    subtitle: 'PIG TRAVEL RANKING',
-    icon: '🐷',
-    accentColor: '#FF69B4',
+    title: 'TRAVELER',
+    subtitle: 'RANKING LIST',
+    icon: pigIcon,
+    accentColor: '#1A1A1A',
     rankItemsHtml,
     isEmpty: entries.length === 0,
-    emptyText: '本群还没有旅行记录哦~',
-    scoreLabel: '得分',
+    emptyText: 'NO TRAVEL RECORDS YET',
+    scoreLabel: 'PTS',
+    bgText: 'TRAVEL',
+    avatarGrayscale: false, // Always color for travel
+    bgUrl
   })
 
-  return await renderLeaderboardCard(ctx, config, html, `pig_rank_${guildId}`)
+  return await renderLeaderboardCard(ctx, config, html, `pig_rank_${guildId}`, entries.length)
 }
 
 /**
@@ -165,43 +231,86 @@ export async function generateSleepLeaderboardCard(
   ctx: Context,
   config: Config,
   entries: SleepLeaderboardEntry[],
-  guildId: string
+  guildId: string,
+  backgroundImage?: string
 ): Promise<{ buffer: Buffer; filename: string }> {
+  // 默认占位符背景
+  const defaultBgUrl = 'https://images.unsplash.com/photo-1507525428034-b723cf961d3e?q=80&w=2073&auto=format&fit=crop'
+
+  // 处理背景图片：如果是本地文件，转换为 base64
+  let bgUrl = defaultBgUrl
+  if (backgroundImage) {
+    if (backgroundImage.startsWith('file://')) {
+      try {
+        const filePath = backgroundImage.replace('file://', '')
+        const buffer = await fs.readFile(filePath)
+        let mimeType = 'image/png'
+        if (filePath.endsWith('.jpg') || filePath.endsWith('.jpeg')) mimeType = 'image/jpeg'
+        else if (filePath.endsWith('.gif')) mimeType = 'image/gif'
+        else if (filePath.endsWith('.webp')) mimeType = 'image/webp'
+        bgUrl = `data:${mimeType};base64,${buffer.toString('base64')}`
+        if (config.debug) ctx.logger('pig').debug(`Loaded local background for sleep rank: ${filePath}`)
+      } catch (e) {
+        ctx.logger('pig').warn(`Failed to load local background: ${e}`)
+      }
+    } else {
+      bgUrl = backgroundImage
+    }
+  }
+
   const rankItemsHtml = entries.map((entry, index) => {
     const rank = index + 1
-    const medalClass = rank <= 3 ? `medal-${rank}` : ''
-    const rankDisplay = rank <= 3 ? ['🥇', '🥈', '🥉'][rank - 1] : rank.toString()
+    const rankDisplay = rank.toString().padStart(2, '0')
+    const peakHourStr = `${entry.peakHour.toString().padStart(2, '0')}:00`
+
+    // Spot colors for top 3
+    let rankColorClass = ''
+    if (rank === 1) rankColorClass = 'highlight-yellow'
+    else if (rank === 2) rankColorClass = 'highlight-pink'
+    else if (rank === 3) rankColorClass = 'highlight-blue'
 
     return `
-      <div class="rank-item ${medalClass}">
-        <div class="rank-number">${rankDisplay}</div>
+      <div class="rank-item">
+        <div class="rank-number ${rankColorClass}">${rankDisplay}</div>
         <div class="avatar-container">
-          <img class="avatar" src="${entry.avatarUrl || `https://ui-avatars.com/api/?name=${encodeURIComponent(entry.username.charAt(0))}&background=667eea&color=fff`}"
-               onerror="this.src='https://ui-avatars.com/api/?name=U&background=667eea&color=fff'" />
+          <img class="avatar" src="${entry.avatarUrl || `https://ui-avatars.com/api/?name=${encodeURIComponent(entry.username.charAt(0))}&background=333&color=fff`}"
+               onerror="this.src='https://ui-avatars.com/api/?name=U&background=333&color=fff'" />
         </div>
         <div class="user-info">
           <div class="username">${escapeHtml(entry.username)}</div>
           <div class="stats">
-            <span class="stat-badge bg-purple">熬夜达人</span>
+            <span class="stat-main">${entry.nightMessageCount} NIGHT MSGS</span>
+            <span class="stat-sub">PEAK: ${peakHourStr}</span>
           </div>
         </div>
-        <div class="score">${entry.abnormalCount}</div>
+        <div class="score-box">
+          <div class="score-label">OWL PTS</div>
+          <div class="score-value">${entry.nightOwlCount}</div>
+        </div>
       </div>
     `
   }).join('')
 
+  const owlSvg = await getPigSvgDataUrlByName('owl.svg')
+  const owlIcon = owlSvg
+    ? `<img class="header-icon-img" src="${owlSvg}" alt="owl" />`
+    : '🦉'
+
   const html = generateLeaderboardHtml({
-    title: '熬夜王榜',
-    subtitle: 'NIGHT OWL RANKING',
-    icon: '🦉',
-    accentColor: '#9B59B6',
+    title: 'NIGHT OWL',
+    subtitle: 'ACTIVE AT NIGHT',
+    icon: owlIcon,
+    accentColor: '#1A1A1A',
     rankItemsHtml,
     isEmpty: entries.length === 0,
-    emptyText: '本群还没有熬夜记录哦~',
-    scoreLabel: '次数',
+    emptyText: 'NO NIGHT OWLS FOUND',
+    scoreLabel: 'TIMES',
+    bgText: 'INSOMNIA',
+    avatarGrayscale: config.nightOwlGrayscaleAvatar, // Use config
+    bgUrl
   })
 
-  return await renderLeaderboardCard(ctx, config, html, `sleep_rank_${guildId}`)
+  return await renderLeaderboardCard(ctx, config, html, `sleep_rank_${guildId}`, entries.length)
 }
 
 interface LeaderboardHtmlOptions {
@@ -213,10 +322,13 @@ interface LeaderboardHtmlOptions {
   isEmpty: boolean
   emptyText: string
   scoreLabel: string
+  bgText: string
+  avatarGrayscale: boolean
+  bgUrl: string
 }
 
 function generateLeaderboardHtml(options: LeaderboardHtmlOptions): string {
-  const { title, subtitle, icon, accentColor, rankItemsHtml, isEmpty, emptyText, scoreLabel } = options
+  const { title, subtitle, icon, accentColor, rankItemsHtml, isEmpty, emptyText, scoreLabel, bgText, avatarGrayscale, bgUrl } = options
 
   return `
 <!DOCTYPE html>
@@ -224,7 +336,7 @@ function generateLeaderboardHtml(options: LeaderboardHtmlOptions): string {
 <head>
 <meta charset="UTF-8">
 <style>
-  @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;700;900&display=swap');
+  @import url('https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@400;700;900&family=Noto+Sans+SC:wght@300;400;700&display=swap');
 
   * {
     margin: 0;
@@ -234,313 +346,263 @@ function generateLeaderboardHtml(options: LeaderboardHtmlOptions): string {
 
   body {
     width: 800px;
-    min-height: 600px;
-    font-family: "Noto Sans SC", sans-serif, "Noto Color Emoji";
-    background-color: #FFDEE9;
-    background-image:
-      radial-gradient(#000 10%, transparent 11%),
-      radial-gradient(#000 10%, transparent 11%);
-    background-size: 30px 30px;
-    background-position: 0 0, 15px 15px;
-    padding: 40px;
-  }
-
-  .twemoji {
-    font-family: "Twemoji", "Noto Color Emoji", sans-serif;
+    font-family: "Noto Sans SC", sans-serif;
+    background-color: #F7F5F2; /* 纸张米色 */
+    color: #1A1A1A;
+    padding: 0;
   }
 
   .container {
-    background: #fff;
-    border: 4px solid #000;
-    box-shadow: 16px 16px 0 #000;
-    padding: 40px;
-    position: relative;
-    overflow: hidden;
-  }
-
-  .deco-shape-1 {
-    position: absolute;
-    top: -30px;
-    right: -30px;
-    width: 120px;
-    height: 120px;
-    background: ${accentColor};
-    border: 4px solid #000;
-    border-radius: 50%;
-    z-index: 0;
-  }
-
-  .deco-shape-2 {
-    position: absolute;
-    bottom: 30px;
-    left: -20px;
-    width: 80px;
-    height: 80px;
-    background: #00CED1;
-    border: 4px solid #000;
-    transform: rotate(45deg);
-    z-index: 0;
-  }
-
-  .header {
-    text-align: center;
-    margin-bottom: 32px;
-    position: relative;
-    z-index: 1;
-    border-bottom: 4px solid #000;
-    padding-bottom: 24px;
-  }
-
-  .title-row {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 16px;
-    margin-bottom: 12px;
-  }
-
-  .title-icon {
-    font-size: 56px;
-    background: ${accentColor};
-    border: 4px solid #000;
-    padding: 8px 12px;
-    box-shadow: 6px 6px 0 #000;
-    line-height: 1;
-  }
-
-  .title {
-    font-size: 56px;
-    font-weight: 900;
-    color: #000;
-    text-shadow: 4px 4px 0 ${accentColor};
-    letter-spacing: 4px;
-  }
-
-  .subtitle {
-    font-size: 24px;
-    color: #000;
-    font-weight: 700;
-    background: #FFD700;
-    display: inline-block;
-    padding: 6px 20px;
-    border: 3px solid #000;
-    box-shadow: 4px 4px 0 #000;
-    transform: rotate(-1deg);
-  }
-
-  .rank-list {
+    padding: 60px;
     display: flex;
     flex-direction: column;
-    gap: 16px;
     position: relative;
+    background: #F7F5F2; /* 默认纸张米色，会被自定义背景覆盖 */
+    overflow: hidden;
+  }
+
+  /* 自定义背景层 */
+  .custom-bg {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    z-index: 0;
+    opacity: 0.15; /* 降低不透明度作为背景纹理 */
+    background-image: url('${bgUrl}');
+    background-size: cover;
+    background-position: center;
+    filter: grayscale(100%); /* 默认黑白 */
+    pointer-events: none;
+  }
+
+  /* 装饰背景字 */
+  .bg-text {
+    position: absolute;
+    top: 100px;
+    right: -20px;
+    font-size: 180px;
+    font-weight: 900;
+    color: rgba(0,0,0,0.03);
     z-index: 1;
+    pointer-events: none;
+    font-family: "Noto Serif SC", serif;
+    letter-spacing: 20px;
+    word-break: break-all;
+    line-height: 0.8;
+    width: 100%;
+    text-align: right;
   }
 
-  .rank-item {
+  /* 顶部 Header */
+  .header {
+    border-bottom: 4px solid #1A1A1A;
+    padding-bottom: 20px;
+    margin-bottom: 40px;
     display: flex;
-    align-items: center;
-    gap: 16px;
-    padding: 16px 20px;
-    background: #fff;
-    border: 3px solid #000;
-    box-shadow: 6px 6px 0 #000;
+    justify-content: space-between;
+    align-items: flex-end;
     position: relative;
-    transition: transform 0.2s;
+    z-index: 2;
   }
 
-  .rank-item:nth-child(odd) {
-    transform: rotate(0.3deg);
+  .header-left {
+    display: flex;
+    flex-direction: column;
   }
 
-  .rank-item:nth-child(even) {
-    transform: rotate(-0.3deg);
+  .main-title {
+    font-family: "Noto Serif SC", serif;
+    font-size: 80px;
+    font-weight: 900;
+    line-height: 0.9;
+    letter-spacing: -3px;
+    color: #1A1A1A;
   }
 
-  .rank-item.medal-1 {
-    background: linear-gradient(135deg, #FFD700 0%, #FFA500 100%);
+  .sub-title {
+    font-size: 20px;
+    text-transform: uppercase;
+    letter-spacing: 6px;
+    margin-top: 10px;
+    font-weight: 700;
+    color: #666;
   }
 
-  .rank-item.medal-2 {
-    background: linear-gradient(135deg, #C0C0C0 0%, #A0A0A0 100%);
-  }
-
-  .rank-item.medal-3 {
-    background: linear-gradient(135deg, #CD7F32 0%, #8B4513 100%);
-  }
-
-  .rank-number {
-    width: 48px;
-    height: 48px;
-    background: #000;
-    color: #fff;
+  .header-icon {
+    font-size: 80px;
+    line-height: 1;
     display: flex;
     align-items: center;
     justify-content: center;
-    font-size: 24px;
-    font-weight: 900;
-    flex-shrink: 0;
-    box-shadow: 3px 3px 0 ${accentColor};
   }
 
-  .medal-1 .rank-number,
-  .medal-2 .rank-number,
-  .medal-3 .rank-number {
-    background: transparent;
-    color: #000;
-    font-size: 32px;
-    box-shadow: none;
-  }
-
-  .avatar-container {
-    border: 3px solid #000;
-    border-radius: 50%;
-    overflow: hidden;
-    background: ${accentColor};
-    flex-shrink: 0;
-  }
-
-  .avatar {
-    width: 56px;
-    height: 56px;
-    object-fit: cover;
+  .header-icon-img {
+    width: 88px;
+    height: 88px;
+    object-fit: contain;
     display: block;
   }
 
+  /* 列表样式 */
+  .rank-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+    z-index: 2;
+  }
+
+  .rank-item {
+    display: grid;
+    grid-template-columns: 80px 70px 1fr 100px;
+    gap: 20px;
+    padding: 24px 0;
+    border-bottom: 1px dashed #ccc;
+    align-items: center;
+  }
+
+  .rank-item:first-child {
+    padding-top: 10px;
+    border-bottom: 2px solid #1A1A1A;
+  }
+
+  /* 只有第一名的头像放大 */
+  .rank-item:first-child .avatar-container {
+    width: 90px;
+    height: 90px;
+  }
+
+  .rank-number {
+    font-family: "Noto Serif SC", serif;
+    font-size: 48px;
+    font-weight: 700;
+    color: #ccc;
+    font-style: italic;
+    text-align: center;
+  }
+
+  /* Spot Colors */
+  .rank-number.highlight-yellow { color: #E6B422; /* Gold-ish */ }
+  .rank-number.highlight-pink { color: #FF9AA2; }
+  .rank-number.highlight-blue { color: #A0C4FF; }
+
+  .avatar-container {
+    width: 70px;
+    height: 70px;
+    border: 1px solid #1A1A1A;
+    padding: 4px;
+    background: #fff;
+    transform: rotate(-3deg);
+    box-shadow: 3px 3px 0 rgba(0,0,0,0.1);
+  }
+
+  .avatar {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    filter: ${avatarGrayscale ? 'grayscale(100%) contrast(1.1)' : 'none'};
+  }
+
   .user-info {
-    flex: 1;
-    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
   }
 
   .username {
-    font-size: 24px;
-    font-weight: 800;
-    color: #000;
+    font-family: "Noto Serif SC", serif;
+    font-size: 28px;
+    font-weight: 700;
     margin-bottom: 4px;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
+    color: #1A1A1A;
   }
 
   .stats {
-    display: flex;
-    gap: 8px;
-    flex-wrap: wrap;
-  }
-
-  .stat-badge {
     font-size: 14px;
-    font-weight: 600;
-    padding: 2px 8px;
-    border: 2px solid #000;
-    display: inline-block;
+    color: #666;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    font-family: "Noto Sans SC", sans-serif;
   }
 
-  .bg-yellow { background: #FFD700; }
-  .bg-cyan { background: #00CED1; }
-  .bg-pink { background: #FF69B4; }
-  .bg-purple { background: #9B59B6; color: #fff; }
+  .stat-main {
+    font-weight: 700;
+    color: #1A1A1A;
+    background: #E0D8D0;
+    padding: 2px 6px;
+    border-radius: 2px;
+  }
 
-  .score {
-    font-size: 32px;
+  .score-box {
+    text-align: right;
+  }
+
+  .score-value {
+    font-family: "Noto Serif SC", serif;
+    font-size: 40px;
     font-weight: 900;
-    color: #000;
-    background: #FFD700;
-    padding: 8px 16px;
-    border: 3px solid #000;
-    box-shadow: 4px 4px 0 #000;
-    flex-shrink: 0;
+    line-height: 1;
   }
 
   .score-label {
-    position: absolute;
-    top: -10px;
-    right: 80px;
-    font-size: 12px;
-    font-weight: 700;
-    background: #fff;
-    padding: 2px 6px;
-    border: 2px solid #000;
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 2px;
+    color: #888;
   }
 
+  /* 空状态 */
   .empty-state {
     text-align: center;
-    padding: 60px 40px;
-    border: 4px dashed #000;
-    background: #fff;
-    margin: 20px 0;
-  }
-
-  .empty-icon {
-    font-size: 64px;
-    margin-bottom: 16px;
+    padding: 100px 0;
+    color: #888;
+    z-index: 2;
   }
 
   .empty-text {
+    font-family: "Noto Serif SC", serif;
     font-size: 24px;
-    font-weight: 700;
-    color: #000;
-  }
-
-  .footer {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-top: 32px;
-    padding-top: 20px;
-    border-top: 4px solid #000;
-    position: relative;
-    z-index: 1;
-  }
-
-  .brand {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-  }
-
-  .brand-icon {
-    font-size: 32px;
-    background: ${accentColor};
-    border: 3px solid #000;
-    padding: 4px;
-    line-height: 1;
-    box-shadow: 3px 3px 0 #000;
-  }
-
-  .brand-name {
-    font-size: 24px;
-    font-weight: 900;
-    text-transform: uppercase;
-    color: #000;
     font-style: italic;
   }
 
-  .generated-at {
-    font-size: 16px;
-    color: #000;
-    font-weight: 600;
-    background: #fff;
-    padding: 4px 10px;
-    border: 2px solid #000;
+  /* 底部 */
+  .footer {
+    margin-top: 40px;
+    padding-top: 40px;
+    border-top: 1px solid #1A1A1A;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 12px;
+    color: #666;
+    text-transform: uppercase;
+    letter-spacing: 2px;
+    z-index: 2;
+  }
+
+  .footer-brand {
+    font-weight: 700;
+    color: #1A1A1A;
+    font-family: "Noto Serif SC", serif;
   }
 </style>
 </head>
 <body>
-  <div class="deco-shape-1"></div>
-  <div class="deco-shape-2"></div>
-
   <div class="container">
+    <div class="custom-bg"></div>
+    <div class="bg-text">${bgText}</div>
+
     <div class="header">
-      <div class="title-row">
-        <div class="title-icon"><span class="twemoji">${icon}</span></div>
-        <div class="title">${title}</div>
+      <div class="header-left">
+        <div class=\"main-title\">${title}</div>
+        <div class="sub-title">${subtitle}</div>
       </div>
-      <div class="subtitle">${subtitle}</div>
+      <div class="header-icon">${icon}</div>
     </div>
 
     ${isEmpty ? `
       <div class="empty-state">
-        <div class="empty-icon"><span class="twemoji">${icon}</span></div>
         <div class="empty-text">${emptyText}</div>
       </div>
     ` : `
@@ -550,11 +612,8 @@ function generateLeaderboardHtml(options: LeaderboardHtmlOptions): string {
     `}
 
     <div class="footer">
-      <div class="brand">
-        <div class="brand-icon"><span class="twemoji">${icon}</span></div>
-        <div class="brand-name">Pig Travel</div>
-      </div>
-      <div class="generated-at">${new Date().toLocaleDateString('zh-CN')}</div>
+      <div class="footer-brand">PIG TRAVEL</div>
+      <div>${new Date().toLocaleDateString('en-US').toUpperCase()}</div>
     </div>
   </div>
 
@@ -585,7 +644,8 @@ async function renderLeaderboardCard(
   ctx: Context,
   config: Config,
   html: string,
-  filenamePrefix: string
+  filenamePrefix: string,
+  entryCount: number
 ): Promise<{ buffer: Buffer; filename: string }> {
   let page: Awaited<ReturnType<Context['puppeteer']['page']>> | null = null
   try {
@@ -595,7 +655,12 @@ async function renderLeaderboardCard(
       page.on('console', msg => ctx.logger('pig').debug(`[Leaderboard] ${msg.text()}`))
     }
 
-    await page.setViewport({ width: 800, height: 1200, deviceScaleFactor: 1 })
+    // 动态计算高度：头部约200px + 每条约120px + 底部约150px
+    const baseHeight = 350
+    const entryHeight = Math.max(entryCount, 1) * 120
+    const totalHeight = baseHeight + entryHeight
+
+    await page.setViewport({ width: 800, height: totalHeight, deviceScaleFactor: 1 })
     await page.setContent(html, { waitUntil: 'domcontentloaded' })
     await page.evaluate(() => window['renderReady'])
 

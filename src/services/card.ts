@@ -4,6 +4,7 @@ import { fileURLToPath } from 'url'
 import { Location } from '../constants'
 import { Config } from '../config'
 import { UserInfo } from './travel'
+import { getRandomPigSvgDataUrl } from './pig-icon'
 
 export interface CardData {
   location: Location
@@ -231,6 +232,13 @@ export async function generateFootprintCard(
   const dateStr = `${now.getFullYear()}年${now.getMonth() + 1}月${now.getDate()}日`
 
   const bgCssValue = bgImage ? `url("${bgImage}")` : 'none'
+  const pigSvg = await getRandomPigSvgDataUrl()
+  const pigInline = pigSvg
+    ? `<img class="pig-emoji pig-emoji--inline" src="${pigSvg}" alt="pig" />`
+    : '<span class="pig-emoji-fallback">🐷</span>'
+  const pigBrand = pigSvg
+    ? `<img class="pig-emoji pig-emoji--brand" src="${pigSvg}" alt="pig" />`
+    : '<span class="pig-emoji-fallback">🐷</span>'
   const html = `
 <!DOCTYPE html>
 <html>
@@ -260,9 +268,21 @@ ${fontFaceCss}
     --small-font: "BBH Bartle", "BBH Bogle", "BBH Sans Bartle", "BBH Sans Bogle", "FZLanTingHei-B-GBK", "Noto Sans CJK SC", "Microsoft YaHei", sans-serif;
   }
 
-  /* Specific class for the pig emoji to use Twemoji */
-  .twemoji {
-    font-family: "Twemoji", "Noto Color Emoji", sans-serif;
+  .pig-emoji {
+    display: inline-block;
+    width: 1.1em;
+    height: 1.1em;
+    vertical-align: -0.12em;
+    object-fit: contain;
+  }
+
+  .pig-emoji--brand {
+    width: 56px;
+    height: 56px;
+  }
+
+  .pig-emoji-fallback {
+    font-family: "Noto Color Emoji", "Apple Color Emoji", "Segoe UI Emoji", sans-serif;
     vertical-align: -0.08em;
   }
 
@@ -664,10 +684,13 @@ ${fontFaceCss}
   .message-text {
     font-size: 56px;
     line-height: 1.25;
-    font-weight: 900;
-    color: #1d1d1f;
-    letter-spacing: -0.03em;
+    font-weight: 700; /* 降低字重，笔画更清晰 */
+    color: #000000; /* 纯黑色，提高对比度 */
+    letter-spacing: -0.02em;
     word-break: break-word;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: geometricPrecision;
   }
 
   .highlight {
@@ -756,8 +779,8 @@ ${fontFaceCss}
   .glass-card {
     border-radius: 48px;
     padding: 48px 56px 52px;
-    backdrop-filter: blur(32px) saturate(150%);
-    -webkit-backdrop-filter: blur(32px) saturate(150%);
+    backdrop-filter: blur(20px) saturate(150%);
+    -webkit-backdrop-filter: blur(20px) saturate(150%);
     background: rgba(var(--card-tint, 255, 255, 255), 0.6);
     border: 1px solid rgba(255, 255, 255, 0.35);
     box-shadow: 0 24px 60px rgba(0, 0, 0, 0.18);
@@ -962,6 +985,11 @@ ${fontFaceCss}
 
   .brand-icon {
     transform: none;
+    width: 56px;
+    height: 56px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
   }
 
   .brand-name {
@@ -1005,7 +1033,7 @@ ${fontFaceCss}
 
           <div class="message-body">
             <div class="message-text">
-              今天 <span class="twemoji">🐷</span>猪醒在<br/>
+              今天 ${pigInline}猪醒在<br/>
               <span class="highlight">${data.location.landmarkZh || data.location.landmark}</span>
             </div>
           </div>
@@ -1021,7 +1049,7 @@ ${fontFaceCss}
             </div>
 
             <div class="brand-tag">
-              <div class="brand-icon"><span class="twemoji">🐷</span></div>
+              <div class="brand-icon">${pigBrand}</div>
               <div class="brand-name">Pig<br/>Travel</div>
             </div>
           </div>

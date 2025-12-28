@@ -17,6 +17,15 @@ export interface PigUserState {
   latitude?: number
   longitude?: number
   abnormalCount: number
+  // 熬夜统计（独立于作息异常）
+  nightOwlCount: number
+  lastNightOwlDate?: Date
+  // 消息统计
+  totalMessageCount: number
+  nightMessageCount: number  // 深夜消息数
+  hourlyMessageCounts: string  // JSON: {"0": 5, "1": 3, ...} 各小时消息数
+  // 自定义背景
+  backgroundImage?: string
 }
 
 export interface PigTravelLog {
@@ -45,6 +54,12 @@ export function applyDatabase(ctx: Context) {
     latitude: 'float',
     longitude: 'float',
     abnormalCount: 'unsigned',
+    nightOwlCount: 'unsigned',
+    lastNightOwlDate: 'timestamp',
+    totalMessageCount: 'unsigned',
+    nightMessageCount: 'unsigned',
+    hourlyMessageCounts: 'text',
+    backgroundImage: 'string',
   }, { primary: 'id', autoInc: true })
 
   ctx.model.extend('pig_travel_log', {

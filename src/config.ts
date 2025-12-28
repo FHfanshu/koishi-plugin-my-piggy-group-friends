@@ -13,6 +13,7 @@ export interface Config {
   aigcChannel: string
   aigcPrompt: string
   logPath: string
+  backgroundStoragePath: string
   // LLM location generation
   llmLocationEnabled: boolean
   llmLocationModel: string
@@ -32,6 +33,11 @@ export interface Config {
   monthlySummaryEnabled: boolean
   // Auto wake-up detection (experimental)
   experimentalAutoDetect: boolean
+  // Night owl detection (熬夜检测)
+  nightOwlEnabled: boolean
+  nightOwlStartHour: number
+  nightOwlEndHour: number
+  nightOwlGrayscaleAvatar: boolean
   // Debug
   debug: boolean
 }
@@ -72,11 +78,19 @@ export const Config: Schema<Config> = Schema.intersect([
   }).description('自动检测（实验性）🧪'),
 
   Schema.object({
+    nightOwlEnabled: Schema.boolean().default(true).description('启用熬夜检测（在深夜时段发消息会被记录）'),
+    nightOwlStartHour: Schema.number().default(0).description('熬夜时段开始（0-23，默认 0 点）'),
+    nightOwlEndHour: Schema.number().default(5).description('熬夜时段结束（0-23，默认 5 点）'),
+    nightOwlGrayscaleAvatar: Schema.boolean().default(false).description('熬夜榜头像是否使用黑白滤镜（默认为否，显示彩色）'),
+  }).description('熬夜检测 🦉'),
+
+  Schema.object({
     useStorageService: Schema.boolean().default(true).description('使用 chatluna-storage-service 缓存图片（推荐）'),
     storageCacheHours: Schema.number().default(24).description('图片缓存时间（小时）'),
     logRetentionDays: Schema.number().default(45).description('旅行记录保留天数'),
     monthlySummaryEnabled: Schema.boolean().default(false).description('每月1日自动生成上月旅行总结'),
     logPath: Schema.string().default('./data/pig/logs').description('本地日志存储路径（仅在不使用存储服务时生效）'),
+    backgroundStoragePath: Schema.string().default('./data/pig/backgrounds').description('自定义背景图片存储路径'),
   }).description('存储设置 💾'),
 
   Schema.object({
