@@ -2,7 +2,8 @@ import { Context } from 'koishi'
 import { promises as fs } from 'fs'
 import { Config } from '../config'
 import { PigTravelLog } from '../database'
-import { getRandomPigSvgDataUrl } from './pig-icon'
+import { getPigSvgDataUrlByName, getPigSvgDirResolved, getRandomPigSvgDataUrl } from './pig-icon'
+import { getAdminBackgroundImage } from './background'
 
 export interface MonthlySummaryData {
   userId: string
@@ -174,7 +175,14 @@ export async function generateMonthlySummaryCard(
   // 月份名称
   const monthNames = ['一月', '二月', '三月', '四月', '五月', '六月', '七月', '八月', '九月', '十月', '十一月', '十二月']
   const monthName = monthNames[month - 1]
-  const pigSvg = await getRandomPigSvgDataUrl()
+  let pigSvg = await getRandomPigSvgDataUrl()
+  if (!pigSvg) {
+    pigSvg = await getPigSvgDataUrlByName('pig.svg')
+  }
+  if (!pigSvg && config.debug) {
+    const svgDir = await getPigSvgDirResolved()
+    ctx.logger('pig').warn(`Pig SVG not available, fallback emoji (dir=${svgDir ?? 'none'})`)
+  }
   const pigTitle = pigSvg
     ? `<img class="pig-emoji pig-emoji--title" src="${pigSvg}" alt="pig" />`
     : '<span class="pig-emoji-fallback">🐷</span>'
@@ -752,12 +760,17 @@ export async function prepareMonthlySummary(
   // 获取用户自定义背景
   let backgroundImage: string | undefined
   if (guildId) {
-    const [userState] = await ctx.database.get('pig_user_state', {
-      userId,
-      platform,
-      guildId,
-    })
-    backgroundImage = userState?.backgroundImage
+    const adminBackgroundImage = await getAdminBackgroundImage(ctx, platform, guildId)
+    if (adminBackgroundImage) {
+      backgroundImage = adminBackgroundImage
+    } else {
+      const [userState] = await ctx.database.get('pig_user_state', {
+        userId,
+        platform,
+        guildId,
+      })
+      backgroundImage = userState?.backgroundImage
+    }
   }
 
   return {

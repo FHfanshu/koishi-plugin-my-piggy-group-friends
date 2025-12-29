@@ -2,7 +2,7 @@ import { Context } from 'koishi'
 import { promises as fs } from 'fs'
 import { Config } from '../config'
 import { PigTravelLog, PigUserState } from '../database'
-import { getPigSvgDataUrlByName, getRandomPigSvgDataUrl } from './pig-icon'
+import { getPigSvgDataUrlByName, getPigSvgDirResolved, getRandomPigSvgDataUrl } from './pig-icon'
 
 export interface PigLeaderboardEntry {
   userId: string
@@ -202,7 +202,14 @@ export async function generatePigLeaderboardCard(
     `
   }).join('')
 
-  const pigSvg = await getRandomPigSvgDataUrl()
+  let pigSvg = await getRandomPigSvgDataUrl()
+  if (!pigSvg) {
+    pigSvg = await getPigSvgDataUrlByName('pig.svg')
+  }
+  if (!pigSvg && config.debug) {
+    const svgDir = await getPigSvgDirResolved()
+    ctx.logger('pig').warn(`Pig SVG not available, fallback emoji (dir=${svgDir ?? 'none'})`)
+  }
   const pigIcon = pigSvg
     ? `<img class="header-icon-img" src="${pigSvg}" alt="pig" />`
     : '🐷'
@@ -292,6 +299,10 @@ export async function generateSleepLeaderboardCard(
   }).join('')
 
   const owlSvg = await getPigSvgDataUrlByName('owl.svg')
+  if (!owlSvg && config.debug) {
+    const svgDir = await getPigSvgDirResolved()
+    ctx.logger('pig').warn(`Owl SVG not available, fallback emoji (dir=${svgDir ?? 'none'})`)
+  }
   const owlIcon = owlSvg
     ? `<img class="header-icon-img" src="${owlSvg}" alt="owl" />`
     : '🦉'

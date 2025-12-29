@@ -4,7 +4,7 @@ import { fileURLToPath } from 'url'
 import { Location } from '../constants'
 import { Config } from '../config'
 import { UserInfo } from './travel'
-import { getRandomPigSvgDataUrl } from './pig-icon'
+import { getPigSvgDataUrlByName, getPigSvgDirResolved, getRandomPigSvgDataUrl } from './pig-icon'
 
 export interface CardData {
   location: Location
@@ -232,7 +232,14 @@ export async function generateFootprintCard(
   const dateStr = `${now.getFullYear()}年${now.getMonth() + 1}月${now.getDate()}日`
 
   const bgCssValue = bgImage ? `url("${bgImage}")` : 'none'
-  const pigSvg = await getRandomPigSvgDataUrl()
+  let pigSvg = await getRandomPigSvgDataUrl()
+  if (!pigSvg) {
+    pigSvg = await getPigSvgDataUrlByName('pig.svg')
+  }
+  if (!pigSvg && config.debug) {
+    const svgDir = await getPigSvgDirResolved()
+    ctx.logger('pig').warn(`Pig SVG not available, fallback emoji (dir=${svgDir ?? 'none'})`)
+  }
   const pigInline = pigSvg
     ? `<img class="pig-emoji pig-emoji--inline" src="${pigSvg}" alt="pig" />`
     : '<span class="pig-emoji-fallback">🐷</span>'

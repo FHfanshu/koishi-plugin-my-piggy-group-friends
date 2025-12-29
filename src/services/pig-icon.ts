@@ -26,10 +26,44 @@ export function setPigSvgDir(dir: string) {
   cachedSvgFiles = null
 }
 
+async function resolveSvgDirFromCandidates(): Promise<string | null> {
+  const candidates = [
+    join(process.cwd(), 'data', 'pig', 'svgs'),
+    join(process.cwd(), '..', 'data', 'pig', 'svgs'),
+    join(process.cwd(), '..', '..', 'data', 'pig', 'svgs'),
+    getPackageSvgDir(),
+  ]
+  for (const dir of candidates) {
+    if (!existsSync(dir)) continue
+    try {
+      const entries = await readdir(dir)
+      if (entries.some(name => name.toLowerCase().endsWith('.svg'))) {
+        pigSvgDirOverride = dir
+        return dir
+      }
+    } catch {
+      // ignore
+    }
+  }
+  return null
+}
+
+export async function getPigSvgDirResolved(): Promise<string | null> {
+  if (pigSvgDirOverride) return pigSvgDirOverride
+  return await resolveSvgDirFromCandidates()
+}
+
 async function getPigSvgFiles(): Promise<string[]> {
   if (cachedSvgFiles) return cachedSvgFiles
   try {
-    const svgDir = pigSvgDirOverride || getPackageSvgDir()
+    let svgDir = pigSvgDirOverride
+    if (!svgDir) {
+      svgDir = await resolveSvgDirFromCandidates()
+    }
+    if (!svgDir) {
+      cachedSvgFiles = []
+      return cachedSvgFiles
+    }
     if (!existsSync(svgDir)) {
       cachedSvgFiles = []
       return cachedSvgFiles
@@ -59,7 +93,11 @@ export async function getRandomPigSvgDataUrl(): Promise<string | null> {
 
 export async function getPigSvgDataUrlByName(filename: string): Promise<string | null> {
   try {
-    const baseDir = pigSvgDirOverride || getPackageSvgDir()
+    let baseDir = pigSvgDirOverride
+    if (!baseDir) {
+      baseDir = await resolveSvgDirFromCandidates()
+    }
+    if (!baseDir) return null
     if (!existsSync(baseDir)) return null
     const svgPath = join(baseDir, filename)
     const buffer = await readFile(svgPath)

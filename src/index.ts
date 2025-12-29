@@ -10,6 +10,7 @@ import { getSunriseInfo } from './services/sunrise'
 import { triggerTravelSequence, TravelResult, UserInfo } from './services/travel'
 import { prepareMonthlySummary, generateMonthlySummaryCard, getUsersWithLogsInMonth } from './services/summary'
 import { getPigLeaderboard, getSleepLeaderboard, generatePigLeaderboardCard, generateSleepLeaderboardCard } from './services/leaderboard'
+import { getAdminBackgroundImage } from './services/background'
 import { ensurePigSvgAssets, setPigSvgDir } from './services/pig-icon'
 
 export const name = 'my-pig-group-friends'
@@ -292,7 +293,8 @@ export function apply(ctx: Context, config: Config) {
           platform: session.platform,
           guildId: session.guildId,
         })
-        const backgroundImage = invokerState?.backgroundImage
+        const adminBackgroundImage = await getAdminBackgroundImage(ctx, session.platform, session.guildId)
+        const backgroundImage = adminBackgroundImage ?? invokerState?.backgroundImage
 
         // 填充用户信息（昵称和头像）
         for (const entry of entries) {
@@ -355,7 +357,8 @@ export function apply(ctx: Context, config: Config) {
           platform: session.platform,
           guildId: session.guildId,
         })
-        const backgroundImage = invokerState?.backgroundImage
+        const adminBackgroundImage = await getAdminBackgroundImage(ctx, session.platform, session.guildId)
+        const backgroundImage = adminBackgroundImage ?? invokerState?.backgroundImage
 
         // 填充用户信息（昵称和头像）
         for (const entry of entries) {
@@ -548,6 +551,7 @@ export function apply(ctx: Context, config: Config) {
     const [userState] = await ctx.database.get('pig_user_state', {
       userId: session.userId,
       platform: session.platform,
+      guildId: session.guildId || '',
     })
 
     const lat = userState?.latitude ?? config.defaultLat
@@ -616,6 +620,7 @@ export function apply(ctx: Context, config: Config) {
     const [userState] = await ctx.database.get('pig_user_state', {
       userId: session.userId,
       platform: session.platform,
+      guildId: session.guildId || '',
     })
 
     // 解析现有的小时消息统计
