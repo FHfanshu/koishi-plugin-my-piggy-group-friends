@@ -1113,15 +1113,17 @@ ${fontFaceCss}
 
     function averageColor(img) {
       if (!img || !img.naturalWidth || !img.naturalHeight) return null;
-      const size = 48;
+      const size = 32; // 进一步缩小尺寸以提高性能
       const canvas = document.createElement('canvas');
       canvas.width = size;
       canvas.height = size;
       const ctx = canvas.getContext('2d', { willReadFrequently: true });
       if (!ctx) return null;
       try {
+        // 使用 try-catch 捕获可能的 CORS 错误 (Tainted Canvas)
         ctx.drawImage(img, 0, 0, size, size);
-        const data = ctx.getImageData(0, 0, size, size).data;
+        const imageData = ctx.getImageData(0, 0, size, size);
+        const data = imageData.data;
         let r = 0, g = 0, b = 0, count = 0;
         for (let i = 0; i < data.length; i += 4) {
           const alpha = data[i + 3];
@@ -1134,7 +1136,7 @@ ${fontFaceCss}
         if (!count) return null;
         return [r / count, g / count, b / count];
       } catch (e) {
-        console.warn('Color extraction failed:', e);
+        // 静默失败，不打印日志以避免被 Puppeteer 捕获为错误
         return null;
       }
     }
@@ -1166,27 +1168,31 @@ ${fontFaceCss}
     }
 
     function applyDateColor() {
-      const avatar = document.querySelector('.avatar');
-      const bg = document.querySelector('.bg-image');
-      const avatarColor = averageColor(avatar);
-      const bgColor = averageColor(bg);
-      const mixed = bgColor || avatarColor || null;
-      if (!mixed) return;
-      const blended = avatarColor && bgColor ? mixColors(bgColor, avatarColor, 0.8) : mixed;
-      if (!mixed) return;
-      const base = monetize(blended);
-      const light = monetize(mixColors(base, [255, 255, 255], 0.6));
-      const accent = mixColors(base, [255, 255, 255], 0.05);
-      const accentStrong = mixColors(base, [255, 255, 255], 0);
-      const textColor = luminance(accent) > 0.6 ? [20, 28, 36] : [245, 248, 255];
-      const root = document.documentElement;
-      root.style.setProperty('--date-color', 'rgb(' + base[0] + ', ' + base[1] + ', ' + base[2] + ')');
-      root.style.setProperty('--date-color-light', 'rgb(' + light[0] + ', ' + light[1] + ', ' + light[2] + ')');
-      const tint = mixColors(base, [255, 255, 255], 0.35);
-      root.style.setProperty('--card-tint', Math.round(tint[0]) + ', ' + Math.round(tint[1]) + ', ' + Math.round(tint[2]));
-      root.style.setProperty('--accent-bg', 'rgba(' + Math.round(accent[0]) + ', ' + Math.round(accent[1]) + ', ' + Math.round(accent[2]) + ', 0.3)');
-      root.style.setProperty('--accent-bg-strong', 'rgba(' + Math.round(accentStrong[0]) + ', ' + Math.round(accentStrong[1]) + ', ' + Math.round(accentStrong[2]) + ', 0.45)');
-      root.style.setProperty('--accent-text', 'rgb(' + textColor[0] + ', ' + textColor[1] + ', ' + textColor[2] + ')');
+      try {
+        const avatar = document.querySelector('.avatar');
+        const bg = document.querySelector('.bg-image');
+        const avatarColor = averageColor(avatar);
+        const bgColor = averageColor(bg);
+        const mixed = bgColor || avatarColor || null;
+        if (!mixed) return;
+        const blended = avatarColor && bgColor ? mixColors(bgColor, avatarColor, 0.8) : mixed;
+        if (!blended) return; // 修正变量检查
+        const base = monetize(blended);
+        const light = monetize(mixColors(base, [255, 255, 255], 0.6));
+        const accent = mixColors(base, [255, 255, 255], 0.05);
+        const accentStrong = mixColors(base, [255, 255, 255], 0);
+        const textColor = luminance(accent) > 0.6 ? [20, 28, 36] : [245, 248, 255];
+        const root = document.documentElement;
+        root.style.setProperty('--date-color', 'rgb(' + Math.round(base[0]) + ', ' + Math.round(base[1]) + ', ' + Math.round(base[2]) + ')');
+        root.style.setProperty('--date-color-light', 'rgb(' + Math.round(light[0]) + ', ' + Math.round(light[1]) + ', ' + Math.round(light[2]) + ')');
+        const tint = mixColors(base, [255, 255, 255], 0.35);
+        root.style.setProperty('--card-tint', Math.round(tint[0]) + ', ' + Math.round(tint[1]) + ', ' + Math.round(tint[2]));
+        root.style.setProperty('--accent-bg', 'rgba(' + Math.round(accent[0]) + ', ' + Math.round(accent[1]) + ', ' + Math.round(accent[2]) + ', 0.3)');
+        root.style.setProperty('--accent-bg-strong', 'rgba(' + Math.round(accentStrong[0]) + ', ' + Math.round(accentStrong[1]) + ', ' + Math.round(accentStrong[2]) + ', 0.45)');
+        root.style.setProperty('--accent-text', 'rgb(' + Math.round(textColor[0]) + ', ' + Math.round(textColor[1]) + ', ' + Math.round(textColor[2]) + ')');
+      } catch (e) {
+        // 全局捕获异常，确保不阻塞渲染过程
+      }
     }
 
     async function waitForImages() {
