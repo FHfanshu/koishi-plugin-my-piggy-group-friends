@@ -8,9 +8,9 @@ import { Config } from './config'
 import { applyDatabase } from './database'
 import { getSunriseInfo } from './services/sunrise'
 import { triggerTravelSequence, TravelResult, UserInfo } from './services/travel'
-import { prepareMonthlySummary, generateMonthlySummaryCard, getUsersWithLogsInMonth } from './services/summary'
+import { prepareMonthlySummary, generateMonthlySummaryCard, getUsersWithLogsInMonth, prepareMonthlySummaryGroup, generateMonthlySummaryGroupCard } from './services/summary'
 import { getPigLeaderboard, getSleepLeaderboard, generatePigLeaderboardCard, generateSleepLeaderboardCard } from './services/leaderboard'
-import { getAdminBackgroundImage } from './services/background'
+import { getAdminBackgroundImage, setGuildBackgroundImage, getGuildBackgroundInfo } from './services/background'
 import { ensurePigSvgAssets, setPigSvgDir } from './services/pig-icon'
 
 export const name = 'my-pig-group-friends'
@@ -35,7 +35,7 @@ function formatTravelMessage(result: TravelResult, userId: string, config: Confi
   // 回退到 base64（当存储服务不可用时）
   if (result.imageBuffer) {
     const base64 = result.imageBuffer.toString('base64')
-    return `${segment.at(userId)} ${result.msg}\n${segment.image(`base64://${base64}`)}`
+    return `${segment.at(userId)} ${result.msg}\n${segment.image(`data:image/png;base64,${base64}`)}`
   }
 
   // 无图片时只发文本
@@ -189,32 +189,75 @@ export function apply(ctx: Context, config: Config) {
 
       try {
         if (options.all) {
+          if (config.monthlySummaryScope === 'guild' && !session.guildId) {
+            return '当前模式为按群统计，请在群组内使用该命令'
+          }
           // 生成所有用户的总结
-          const users = await getUsersWithLogsInMonth(ctx, year, month)
+          const users = await getUsersWithLogsInMonth(
+            ctx,
+            year,
+            month,
+            config.monthlySummaryScope === 'guild' ? session.guildId : undefined
+          )
 
           if (users.length === 0) {
             return `${year}年${month}月 没有任何旅行记录`
           }
 
-          await session.send(`找到 ${users.length} 位用户有旅行记录，开始生成...`)
-
+          const profiles = new Map<string, { username?: string; avatarUrl?: string }>()
           for (const { userId, platform } of users) {
-            try {
-              const summaryData = await prepareMonthlySummary(
-                ctx, userId, platform, userId, '', year, month
-              )
-              const result = await generateMonthlySummaryCard(ctx, config, summaryData)
+            let username = userId
+            let avatarUrl = ''
+            const isNumericId = /^\d+$/.test(userId)
 
-              // 发送卡片
-              const base64 = result.buffer.toString('base64')
-              await session.send(`用户 ${userId} 的总结：\n${segment.image(`base64://${base64}`)}`)
-            } catch (e) {
-              ctx.logger('pig').error(`Failed to generate summary for user ${userId}:`, e)
-              await session.send(`生成用户 ${userId} 的总结时出错: ${e}`)
+            const isQQ = platform === 'onebot' || platform === 'qq' || platform.includes('qq')
+            if (isQQ && isNumericId) {
+              avatarUrl = `https://q.qlogo.cn/headimg_dl?dst_uin=${userId}&spec=640`
+            }
+
+            if (session.bot && platform === session.platform && isNumericId) {
+              if (session.guildId && session.bot.getGuildMember) {
+                try {
+                  const member = await session.bot.getGuildMember(session.guildId, userId)
+                  username = member.nick || member.name || member.user?.name || username
+                  avatarUrl = avatarUrl || member.user?.avatar || ''
+                } catch {
+                  // ignore member fetch error
+                }
+              }
+
+              if (username === userId && session.bot.getUser) {
+                try {
+                  const user = await session.bot.getUser(userId)
+                  username = user.name || username
+                  avatarUrl = avatarUrl || user.avatar || ''
+                } catch {
+                  // ignore user fetch error
+                }
+              }
+            }
+
+            profiles.set(`${platform}:${userId}`, { username, avatarUrl })
+          }
+
+          const summaryGroupData = await prepareMonthlySummaryGroup(
+            ctx,
+            year,
+            month,
+            config.monthlySummaryScope === 'guild' ? session.guildId : undefined,
+            profiles
+          )
+
+          if (config.monthlySummaryScope === 'guild' && session.guildId) {
+            const adminBackgroundImage = await getAdminBackgroundImage(ctx, session.platform, session.guildId)
+            if (adminBackgroundImage) {
+              summaryGroupData.backgroundImage = adminBackgroundImage
             }
           }
 
-          return `已完成 ${users.length} 位用户的月度总结生成`
+          const result = await generateMonthlySummaryGroupCard(ctx, config, summaryGroupData)
+          const base64 = result.buffer.toString('base64')
+          return `${year}年${month}月 旅行大合照\n${segment.image(`data:image/png;base64,${base64}`)}`
         } else {
           // 生成指定用户的总结
           let avatarUrl = ''
@@ -226,13 +269,15 @@ export function apply(ctx: Context, config: Config) {
             username = session.author?.nickname || session.author?.name || session.username || targetUserId
           }
 
+          const isNumericTargetId = /^\d+$/.test(targetUserId)
+
           // 处理 QQ 头像 - onebot 或 qq 平台
-          if (!avatarUrl && (targetPlatform === 'onebot' || targetPlatform === 'qq' || targetPlatform.includes('qq'))) {
+          if (!avatarUrl && isNumericTargetId && (targetPlatform === 'onebot' || targetPlatform === 'qq' || targetPlatform.includes('qq'))) {
             avatarUrl = `https://q.qlogo.cn/headimg_dl?dst_uin=${targetUserId}&spec=640`
           }
 
           // 尝试获取目标用户的群成员信息
-          if (targetUserId !== session.userId && session.bot?.getGuildMember && session.guildId) {
+          if (isNumericTargetId && targetUserId !== session.userId && session.bot?.getGuildMember && session.guildId) {
             try {
               const member = await session.bot.getGuildMember(session.guildId, targetUserId)
               username = member.nick || member.name || member.user?.name || username
@@ -254,14 +299,21 @@ export function apply(ctx: Context, config: Config) {
           }
 
           const summaryData = await prepareMonthlySummary(
-            ctx, targetUserId, targetPlatform, userInfo.username, userInfo.avatarUrl, year, month, session.guildId
+            ctx,
+            targetUserId,
+            targetPlatform,
+            userInfo.username,
+            userInfo.avatarUrl,
+            year,
+            month,
+            config.monthlySummaryScope === 'guild' ? session.guildId : undefined
           )
 
           const result = await generateMonthlySummaryCard(ctx, config, summaryData)
 
           // 发送卡片
           const base64 = result.buffer.toString('base64')
-          return `${segment.at(targetUserId)} ${year}年${month}月 旅行总结\n${segment.image(`base64://${base64}`)}`
+          return `${segment.at(targetUserId)} ${year}年${month}月 旅行总结\n${segment.image(`data:image/png;base64,${base64}`)}`
         }
       } catch (e) {
         ctx.logger('pig').error('Failed to generate monthly summary:', e)
@@ -287,14 +339,8 @@ export function apply(ctx: Context, config: Config) {
           return '本群还没有旅行记录哦~'
         }
 
-        // 获取调用者的自定义背景
-        const [invokerState] = await ctx.database.get('pig_user_state', {
-          userId: session.userId,
-          platform: session.platform,
-          guildId: session.guildId,
-        })
-        const adminBackgroundImage = await getAdminBackgroundImage(ctx, session.platform, session.guildId)
-        const backgroundImage = adminBackgroundImage ?? invokerState?.backgroundImage
+        // 获取群组统一背景
+        const backgroundImage = await getAdminBackgroundImage(ctx, session.platform, session.guildId)
 
         // 填充用户信息（昵称和头像）
         for (const entry of entries) {
@@ -326,7 +372,7 @@ export function apply(ctx: Context, config: Config) {
 
         // 返回图片
         const base64 = result.buffer.toString('base64')
-        return segment.image(`base64://${base64}`)
+        return segment.image(`data:image/png;base64,${base64}`)
       } catch (e) {
         ctx.logger('pig').error('Failed to generate pig leaderboard:', e)
         return `生成猪排行榜失败: ${e}`
@@ -351,14 +397,8 @@ export function apply(ctx: Context, config: Config) {
           return '本群还没有熬夜记录哦~'
         }
 
-        // 获取调用者的自定义背景
-        const [invokerState] = await ctx.database.get('pig_user_state', {
-          userId: session.userId,
-          platform: session.platform,
-          guildId: session.guildId,
-        })
-        const adminBackgroundImage = await getAdminBackgroundImage(ctx, session.platform, session.guildId)
-        const backgroundImage = adminBackgroundImage ?? invokerState?.backgroundImage
+        // 获取群组统一背景
+        const backgroundImage = await getAdminBackgroundImage(ctx, session.platform, session.guildId)
 
         // 填充用户信息（昵称和头像）
         for (const entry of entries) {
@@ -390,46 +430,74 @@ export function apply(ctx: Context, config: Config) {
 
         // 返回图片
         const base64 = result.buffer.toString('base64')
-        return segment.image(`base64://${base64}`)
+        return segment.image(`data:image/png;base64,${base64}`)
       } catch (e) {
         ctx.logger('pig').error('Failed to generate sleep leaderboard:', e)
         return `生成熬夜王榜失败: ${e}`
       }
     })
 
-  // 自定义背景图片
-  ctx.command('pig.bg', '设置/查看自定义背景图片（可直接发送图片或 URL）')
+  // 群组背景图片设置（仅管理员可用）
+  ctx.command('pig.bg', '设置/查看群组背景图片（仅管理员可用）')
     .option('reset', '-r 重置为默认背景')
     .action(async ({ session, options }) => {
       const platform = session.platform
       const userId = session.userId
-      const guildId = session.guildId || ''
+      const guildId = session.guildId
 
-      // 获取当前用户状态
-      const [userState] = await ctx.database.get('pig_user_state', {
-        userId,
-        platform,
-        guildId,
-      })
+      // 必须在群组中使用
+      if (!guildId) {
+        return '请在群组中使用此命令'
+      }
+
+      // 检查用户权限
+      // 1. Koishi authority >= 3 的用户
+      // 2. 群主 (owner) 或群管理员 (admin)
+      const user = await ctx.database.getUser(platform, userId, ['authority'])
+      const authority = user?.authority ?? 0
+      // 从多个可能的位置获取用户角色（不同适配器存放位置不同）
+      const memberRole = session.author?.roles?.[0]
+        || (session.event as any)?.member?.roles?.[0]
+        || (session.event as any)?.member?.role
+        || (session as any).onebot?.sender?.role
+      const isGuildAdmin = memberRole === 'owner' || memberRole === 'admin'
+
+      if (config.debug) {
+        ctx.logger('pig').debug(`pig.bg permission check: userId=${userId}, authority=${authority}, memberRole=${memberRole}, isGuildAdmin=${isGuildAdmin}`)
+      }
+
+      if (authority < 3 && !isGuildAdmin) {
+        // 普通用户只能查看当前背景
+        const bgInfo = await getGuildBackgroundInfo(ctx, platform, guildId)
+        if (bgInfo?.backgroundImage) {
+          const bgPath = bgInfo.backgroundImage.startsWith('file://')
+            ? '(本地文件)'
+            : bgInfo.backgroundImage
+          const setAt = bgInfo.setAt ? new Date(bgInfo.setAt).toLocaleDateString('zh-CN') : '未知'
+          return `当前群组背景: ${bgPath}\n设置时间: ${setAt}\n\n(仅管理员可修改群组背景)`
+        }
+        return '当前群组使用默认背景\n\n(仅管理员可设置群组背景)'
+      }
+
+      // 管理员操作
 
       // 重置背景
       if (options.reset) {
-        if (userState?.backgroundImage) {
+        const bgInfo = await getGuildBackgroundInfo(ctx, platform, guildId)
+        if (bgInfo?.backgroundImage) {
           // 如果是本地文件，尝试删除
-          if (userState.backgroundImage.startsWith('file://')) {
+          if (bgInfo.backgroundImage.startsWith('file://')) {
             try {
-              const filePath = userState.backgroundImage.replace('file://', '')
+              const filePath = bgInfo.backgroundImage.replace('file://', '')
               await fs.unlink(filePath)
-              ctx.logger('pig').info(`Deleted background file: ${filePath}`)
+              ctx.logger('pig').info(`Deleted guild background file: ${filePath}`)
             } catch (e) {
-              ctx.logger('pig').warn(`Failed to delete background file: ${e}`)
+              ctx.logger('pig').warn(`Failed to delete guild background file: ${e}`)
             }
           }
-          await ctx.database.set('pig_user_state', { userId, platform, guildId }, {
-            backgroundImage: null
-          })
+          await setGuildBackgroundImage(ctx, platform, guildId, null, userId)
         }
-        return '已重置为默认背景图片'
+        return '已重置群组背景为默认'
       }
 
       // 解析消息中的图片
@@ -456,13 +524,15 @@ export function apply(ctx: Context, config: Config) {
 
       // 查看当前背景
       if (!imageUrl) {
-        if (userState?.backgroundImage) {
-          const bgPath = userState.backgroundImage.startsWith('file://')
+        const bgInfo = await getGuildBackgroundInfo(ctx, platform, guildId)
+        if (bgInfo?.backgroundImage) {
+          const bgPath = bgInfo.backgroundImage.startsWith('file://')
             ? '(本地文件)'
-            : userState.backgroundImage
-          return `当前背景图片: ${bgPath}\n\n发送 "pig.bg" + 图片 设置新背景\n发送 "pig.bg -r" 重置为默认`
+            : bgInfo.backgroundImage
+          const setAt = bgInfo.setAt ? new Date(bgInfo.setAt).toLocaleDateString('zh-CN') : '未知'
+          return `当前群组背景: ${bgPath}\n设置时间: ${setAt}\n\n发送 "pig.bg" + 图片 设置新背景\n发送 "pig.bg -r" 重置为默认`
         }
-        return '当前使用默认背景\n\n发送 "pig.bg" + 图片 设置自定义背景\n或发送 "pig.bg <URL>" 使用网络图片'
+        return '当前群组使用默认背景\n\n发送 "pig.bg" + 图片 设置群组背景\n或发送 "pig.bg <URL>" 使用网络图片'
       }
 
       await session.send('正在处理图片...')
@@ -495,37 +565,33 @@ export function apply(ctx: Context, config: Config) {
         else if (contentType.includes('gif')) ext = '.gif'
         else if (contentType.includes('webp')) ext = '.webp'
 
-        // 生成文件名
-        const filename = `bg_${platform}_${userId}_${Date.now()}${ext}`
+        // 生成文件名（群组背景使用 guild 前缀）
+        const filename = `guild_bg_${platform}_${guildId}_${Date.now()}${ext}`
         const filePath = join(storagePath, filename)
 
-        // 保存文件
-        await fs.writeFile(filePath, buffer)
-        ctx.logger('pig').info(`Background saved: ${filePath}`)
-
         // 删除旧的本地背景文件（如果有）
-        if (userState?.backgroundImage?.startsWith('file://')) {
+        const oldBgInfo = await getGuildBackgroundInfo(ctx, platform, guildId)
+        if (oldBgInfo?.backgroundImage?.startsWith('file://')) {
           try {
-            const oldPath = userState.backgroundImage.replace('file://', '')
+            const oldPath = oldBgInfo.backgroundImage.replace('file://', '')
             await fs.unlink(oldPath)
-            ctx.logger('pig').info(`Deleted old background: ${oldPath}`)
+            ctx.logger('pig').info(`Deleted old guild background: ${oldPath}`)
           } catch (e) {
             // 忽略删除失败
           }
         }
 
-        // 保存到数据库（使用 file:// 协议标记本地文件）
-        await ctx.database.upsert('pig_user_state', [{
-          userId,
-          platform,
-          guildId,
-          backgroundImage: `file://${filePath}`,
-        }], ['platform', 'userId', 'guildId'])
+        // 保存文件
+        await fs.writeFile(filePath, buffer)
+        ctx.logger('pig').info(`Guild background saved: ${filePath}`)
 
-        return `✅ 背景图片已保存！\n\n新背景将在下次生成 Summary 或排行榜时生效。`
+        // 保存到群组配置表
+        await setGuildBackgroundImage(ctx, platform, guildId, `file://${filePath}`, userId)
+
+        return `群组背景图片已设置！\n\n新背景将在下次生成 Summary 或排行榜时生效。`
       } catch (e) {
-        ctx.logger('pig').error(`Failed to save background: ${e}`)
-        return `保存背景图片失败: ${e}`
+        ctx.logger('pig').error(`Failed to save guild background: ${e}`)
+        return `保存群组背景图片失败: ${e}`
       }
     })
 
@@ -533,7 +599,9 @@ export function apply(ctx: Context, config: Config) {
     // 如果没有开启实验性自动检测功能，直接跳过
     if (!config.experimentalAutoDetect) return next()
 
-    if (!session.userId || !session.content) return next()
+    const hasContent = !!session.content
+    const hasElements = Array.isArray(session.elements) && session.elements.length > 0
+    if (!session.userId || (!hasContent && !hasElements)) return next()
 
     const lockKey = `${session.platform}:${session.userId}`
     const now = Date.now()
@@ -611,7 +679,9 @@ export function apply(ctx: Context, config: Config) {
 
   // 消息统计 + 熬夜检测中间件
   ctx.middleware(async (session, next) => {
-    if (!session.userId || !session.content) return next()
+    const hasContent = !!session.content
+    const hasElements = Array.isArray(session.elements) && session.elements.length > 0
+    if (!session.userId || (!hasContent && !hasElements)) return next()
 
     const now = new Date()
     const currentHour = now.getHours()
@@ -690,6 +760,10 @@ export function apply(ctx: Context, config: Config) {
       ctx.logger('pig').debug('Monthly summary is disabled, skipping...')
       return
     }
+    if (config.monthlySummaryScope === 'guild') {
+      ctx.logger('pig').warn('Monthly summary scope is guild, but cron has no guild context. Skipping...')
+      return
+    }
 
     const now = new Date()
     // 计算上个月
@@ -715,7 +789,13 @@ export function apply(ctx: Context, config: Config) {
       for (const { userId, platform } of users) {
         try {
           const summaryData = await prepareMonthlySummary(
-            ctx, userId, platform, userId, '', year, month
+            ctx,
+            userId,
+            platform,
+            userId,
+            '',
+            year,
+            month
           )
           await generateMonthlySummaryCard(ctx, config, summaryData)
           ctx.logger('pig').info(`Generated summary for user ${userId}`)

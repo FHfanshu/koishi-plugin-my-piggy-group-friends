@@ -4,6 +4,7 @@ declare module 'koishi' {
   interface Tables {
     pig_user_state: PigUserState
     pig_travel_log: PigTravelLog
+    pig_guild_config: PigGuildConfig
   }
 }
 
@@ -43,6 +44,19 @@ export interface PigTravelLog {
   isAIGC: boolean
 }
 
+// 群组配置表（用于存储群级别的设置，如统一背景图）
+export interface PigGuildConfig {
+  id: number
+  platform: string
+  guildId: string
+  // 群组统一背景图（仅管理员可设置）
+  backgroundImage?: string
+  // 设置背景的管理员ID
+  backgroundSetBy?: string
+  // 设置时间
+  backgroundSetAt?: Date
+}
+
 export function applyDatabase(ctx: Context) {
   ctx.model.extend('pig_user_state', {
     id: 'unsigned',
@@ -75,5 +89,15 @@ export function applyDatabase(ctx: Context) {
     timezone: 'string',
     imagePath: 'string',
     isAIGC: 'boolean',
+  }, { primary: 'id', autoInc: true })
+
+  // 群组配置表
+  ctx.model.extend('pig_guild_config', {
+    id: 'unsigned',
+    platform: 'string',
+    guildId: 'string',
+    backgroundImage: 'string',
+    backgroundSetBy: 'string',
+    backgroundSetAt: 'timestamp',
   }, { primary: 'id', autoInc: true })
 }

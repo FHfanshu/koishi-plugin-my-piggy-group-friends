@@ -19,6 +19,27 @@ export interface MonthlySummaryData {
   backgroundImage?: string
 }
 
+export interface MonthlySummaryGroupUser {
+  userId: string
+  platform: string
+  username: string
+  avatarUrl: string
+  totalTrips: number
+  countriesCount: number
+  locationsCount: number
+}
+
+export interface MonthlySummaryGroupData {
+  year: number
+  month: number
+  totalUsers: number
+  totalTrips: number
+  countriesVisited: string[]
+  locationsVisited: string[]
+  users: MonthlySummaryGroupUser[]
+  backgroundImage?: string
+}
+
 export interface SummaryCardResult {
   buffer: Buffer
   filename: string
@@ -32,7 +53,8 @@ export async function getMonthlyLogs(
   userId: string,
   platform: string,
   year: number,
-  month: number
+  month: number,
+  guildId?: string
 ): Promise<PigTravelLog[]> {
   const startDate = new Date(year, month - 1, 1)
   const endDate = new Date(year, month, 1)
@@ -40,6 +62,7 @@ export async function getMonthlyLogs(
   const logs = await ctx.database.get('pig_travel_log', {
     userId,
     platform,
+    ...(guildId ? { guildId } : {}),
     timestamp: {
       $gte: startDate,
       $lt: endDate
@@ -58,12 +81,14 @@ export async function getMonthlyLogs(
 export async function getUsersWithLogsInMonth(
   ctx: Context,
   year: number,
-  month: number
+  month: number,
+  guildId?: string
 ): Promise<{ userId: string; platform: string }[]> {
   const startDate = new Date(year, month - 1, 1)
   const endDate = new Date(year, month, 1)
 
   const logs = await ctx.database.get('pig_travel_log', {
+    ...(guildId ? { guildId } : {}),
     timestamp: {
       $gte: startDate,
       $lt: endDate
@@ -80,6 +105,84 @@ export async function getUsersWithLogsInMonth(
   }
 
   return Array.from(userMap.values())
+}
+
+/**
+ * 准备月度合照数据（按月汇总）
+ */
+export async function prepareMonthlySummaryGroup(
+  ctx: Context,
+  year: number,
+  month: number,
+  guildId?: string,
+  profiles?: Map<string, { username?: string; avatarUrl?: string }>
+): Promise<MonthlySummaryGroupData> {
+  const startDate = new Date(year, month - 1, 1)
+  const endDate = new Date(year, month, 1)
+
+  const logs = await ctx.database.get('pig_travel_log', {
+    ...(guildId ? { guildId } : {}),
+    timestamp: {
+      $gte: startDate,
+      $lt: endDate
+    }
+  })
+
+  const countriesSet = new Set<string>()
+  const locationsSet = new Set<string>()
+  const userMap = new Map<string, {
+    userId: string
+    platform: string
+    totalTrips: number
+    countries: Set<string>
+    locations: Set<string>
+  }>()
+
+  for (const log of logs) {
+    countriesSet.add(log.country)
+    locationsSet.add(log.location)
+    const key = `${log.platform}:${log.userId}`
+    if (!userMap.has(key)) {
+      userMap.set(key, {
+        userId: log.userId,
+        platform: log.platform,
+        totalTrips: 0,
+        countries: new Set<string>(),
+        locations: new Set<string>()
+      })
+    }
+    const entry = userMap.get(key)!
+    entry.totalTrips += 1
+    entry.countries.add(log.country)
+    entry.locations.add(log.location)
+  }
+
+  const users: MonthlySummaryGroupUser[] = Array.from(userMap.values()).map(entry => {
+    const profile = profiles?.get(`${entry.platform}:${entry.userId}`)
+    const username = profile?.username || entry.userId
+    const avatarUrl = profile?.avatarUrl || ''
+    return {
+      userId: entry.userId,
+      platform: entry.platform,
+      username,
+      avatarUrl,
+      totalTrips: entry.totalTrips,
+      countriesCount: entry.countries.size,
+      locationsCount: entry.locations.size
+    }
+  })
+
+  users.sort((a, b) => b.totalTrips - a.totalTrips)
+
+  return {
+    year,
+    month,
+    totalUsers: users.length,
+    totalTrips: logs.length,
+    countriesVisited: Array.from(countriesSet),
+    locationsVisited: Array.from(locationsSet),
+    users
+  }
 }
 
 /**
@@ -735,6 +838,372 @@ export async function generateMonthlySummaryCard(
 }
 
 /**
+ * 生成月度合照卡片
+ */
+export async function generateMonthlySummaryGroupCard(
+  ctx: Context,
+  config: Config,
+  data: MonthlySummaryGroupData
+): Promise<SummaryCardResult> {
+  const { year, month, totalUsers, totalTrips, countriesVisited, locationsVisited, users, backgroundImage } = data
+
+  const defaultBgUrl = 'https://images.unsplash.com/photo-1507525428034-b723cf9661d3e?q=80&w=2073&auto=format&fit=crop'
+  let bgUrl = defaultBgUrl
+  if (backgroundImage) {
+    if (backgroundImage.startsWith('file://')) {
+      try {
+        const filePath = backgroundImage.replace('file://', '')
+        const buffer = await fs.readFile(filePath)
+        let mimeType = 'image/png'
+        if (filePath.endsWith('.jpg') || filePath.endsWith('.jpeg')) mimeType = 'image/jpeg'
+        else if (filePath.endsWith('.gif')) mimeType = 'image/gif'
+        else if (filePath.endsWith('.webp')) mimeType = 'image/webp'
+        bgUrl = `data:${mimeType};base64,${buffer.toString('base64')}`
+        if (config.debug) ctx.logger('pig').debug(`Loaded local background: ${filePath}`)
+      } catch (e) {
+        ctx.logger('pig').warn(`Failed to load local background: ${e}`)
+      }
+    } else {
+      bgUrl = backgroundImage
+    }
+  }
+
+  const monthNames = ['一月', '二月', '三月', '四月', '五月', '六月', '七月', '八月', '九月', '十月', '十一月', '十二月']
+  const monthName = monthNames[month - 1]
+
+  const perRow = 4
+  const rowCount = Math.ceil(users.length / perRow)
+  const cardRows = users.map((user) => {
+    const safeName = escapeHtml(user.username || user.userId)
+    const safeId = escapeHtml(user.userId)
+    const avatarFallback = `https://ui-avatars.com/api/?name=${encodeURIComponent(user.username || user.userId)}&background=333&color=fff`
+    const avatar = user.avatarUrl || avatarFallback
+    return `
+      <div class="user-card">
+        <div class="user-avatar">
+          <img src="${avatar}" onerror="this.src='${avatarFallback}'" />
+        </div>
+        <div class="user-info">
+          <div class="user-name">${safeName}</div>
+          <div class="user-id">${safeId}</div>
+        </div>
+        <div class="user-stats">
+          <span>${user.totalTrips} trips</span>
+          <span>${user.countriesCount} countries</span>
+          <span>${user.locationsCount} locations</span>
+        </div>
+      </div>
+    `
+  }).join('')
+
+  const html = `
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@400;700;900&family=Noto+Sans+SC:wght@300;400;700&display=swap');
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    width: 1080px;
+    font-family: "Noto Sans SC", sans-serif;
+    background-color: #F7F5F2;
+    color: #1A1A1A;
+  }
+
+  .container {
+    padding: 70px 70px 90px;
+    position: relative;
+    background: #F7F5F2;
+    overflow: hidden;
+  }
+
+  .custom-bg {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    z-index: 0;
+    opacity: 0.12;
+    background-image: url('${bgUrl}');
+    background-size: cover;
+    background-position: center;
+    filter: grayscale(100%);
+    pointer-events: none;
+  }
+
+  .header {
+    position: relative;
+    z-index: 2;
+    margin-bottom: 40px;
+  }
+
+  .header-top {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    border-bottom: 3px solid #1A1A1A;
+    padding-bottom: 16px;
+    margin-bottom: 24px;
+  }
+
+  .issue {
+    font-family: "Noto Serif SC", serif;
+    font-size: 22px;
+    font-weight: 700;
+    font-style: italic;
+  }
+
+  .header-date {
+    font-size: 16px;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+  }
+
+  .title {
+    font-family: "Noto Serif SC", serif;
+    font-size: 96px;
+    font-weight: 900;
+    letter-spacing: -3px;
+    line-height: 0.9;
+  }
+
+  .subtitle {
+    font-size: 28px;
+    font-weight: 300;
+    text-transform: uppercase;
+    letter-spacing: 10px;
+    color: #666;
+    margin-top: 8px;
+  }
+
+  .stats {
+    position: relative;
+    z-index: 2;
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 20px;
+    padding: 30px 0 40px;
+    border-top: 2px solid #1A1A1A;
+    border-bottom: 2px solid #1A1A1A;
+    margin-bottom: 40px;
+  }
+
+  .stat-item {
+    text-align: center;
+  }
+
+  .stat-value {
+    font-family: "Noto Serif SC", serif;
+    font-size: 72px;
+    line-height: 1;
+  }
+
+  .stat-label {
+    font-size: 14px;
+    letter-spacing: 3px;
+    text-transform: uppercase;
+    color: #888;
+    font-weight: 700;
+  }
+
+  .user-grid {
+    position: relative;
+    z-index: 2;
+    display: grid;
+    grid-template-columns: repeat(${perRow}, 1fr);
+    gap: 18px;
+  }
+
+  .user-card {
+    border: 1px solid #1A1A1A;
+    background: #fff;
+    padding: 16px;
+    display: grid;
+    gap: 12px;
+  }
+
+  .user-avatar {
+    width: 100%;
+    aspect-ratio: 1 / 1;
+    border: 1px solid #1A1A1A;
+    overflow: hidden;
+    background: #f0f0f0;
+  }
+
+  .user-avatar img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
+
+  .user-info {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .user-name {
+    font-size: 22px;
+    font-weight: 700;
+    line-height: 1.1;
+  }
+
+  .user-id {
+    font-size: 14px;
+    color: #666;
+    letter-spacing: 0.5px;
+  }
+
+  .user-stats {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    font-size: 14px;
+    color: #444;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+  }
+
+  .footer {
+    position: relative;
+    z-index: 2;
+    margin-top: 50px;
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-end;
+  }
+
+  .brand-logo {
+    font-family: "Noto Serif SC", serif;
+    font-size: 36px;
+    font-weight: 900;
+    border: 3px solid #1A1A1A;
+    padding: 8px 18px;
+  }
+
+  .barcode {
+    height: 46px;
+    width: 220px;
+    background: repeating-linear-gradient(
+      90deg,
+      #1A1A1A 0px,
+      #1A1A1A 2px,
+      transparent 2px,
+      transparent 4px,
+      #1A1A1A 4px,
+      #1A1A1A 8px,
+      transparent 8px,
+      transparent 9px
+    );
+  }
+</style>
+</head>
+<body>
+  <div class="container">
+    <div class="custom-bg"></div>
+
+    <div class="header">
+      <div class="header-top">
+        <div class="issue">VOL.${year}.${month.toString().padStart(2, '0')}</div>
+        <div class="header-date">${new Date().toLocaleDateString('en-US', { month: 'long', year: 'numeric' }).toUpperCase()}</div>
+      </div>
+      <div class="title">GROUP SUMMARY</div>
+      <div class="subtitle">${year}年${monthName} · 旅行大合照</div>
+    </div>
+
+    <div class="stats">
+      <div class="stat-item">
+        <div class="stat-value">${totalUsers}</div>
+        <div class="stat-label">Travelers</div>
+      </div>
+      <div class="stat-item">
+        <div class="stat-value">${totalTrips}</div>
+        <div class="stat-label">Trips</div>
+      </div>
+      <div class="stat-item">
+        <div class="stat-value">${countriesVisited.length}</div>
+        <div class="stat-label">Countries</div>
+      </div>
+      <div class="stat-item">
+        <div class="stat-value">${locationsVisited.length}</div>
+        <div class="stat-label">Locations</div>
+      </div>
+    </div>
+
+    <div class="user-grid">
+      ${cardRows}
+    </div>
+
+    <div class="footer">
+      <div class="barcode"></div>
+      <div class="brand-logo">PIG TRAVEL</div>
+    </div>
+  </div>
+
+  <script>
+    async function waitForImages() {
+      const images = Array.from(document.images);
+      const promises = images.map(img => {
+        if (img.complete) return Promise.resolve();
+        return new Promise(resolve => {
+          img.onload = () => resolve();
+          img.onerror = () => resolve();
+        });
+      });
+      await Promise.all([
+        ...promises,
+        document.fonts.ready
+      ]);
+      await new Promise(r => setTimeout(r, 120));
+    }
+    window.renderReady = waitForImages();
+  </script>
+</body>
+</html>
+  `
+
+  let page: Awaited<ReturnType<Context['puppeteer']['page']>> | null = null
+  try {
+    page = await ctx.puppeteer.page()
+
+    if (config.debug) {
+      page.on('console', msg => ctx.logger('pig').debug(`[SummaryGroup] ${msg.text()}`))
+    }
+
+    const baseHeight = 820
+    const rowHeight = 250
+    const totalHeight = baseHeight + rowCount * rowHeight
+
+    await page.setViewport({ width: 1080, height: Math.max(1600, totalHeight), deviceScaleFactor: 1 })
+    await page.setContent(html, { waitUntil: 'domcontentloaded' })
+    await page.evaluate(() => window['renderReady'])
+
+    const buffer = await page.screenshot({ type: 'png', fullPage: true }) as Buffer
+    const filename = `pig_summary_group_${year}_${month}.png`
+
+    ctx.logger('pig').info(`月度合照卡片已生成: ${filename}`)
+    return { buffer, filename }
+  } catch (e) {
+    ctx.logger('pig').error('Failed to generate summary group card', e)
+    throw e
+  } finally {
+    if (page) {
+      try {
+        await page.close()
+      } catch (closeError) {
+        if (config.debug) {
+          ctx.logger('pig').warn(`Failed to close puppeteer page: ${closeError}`)
+        }
+      }
+    }
+  }
+}
+
+/**
  * 准备月度总结数据
  */
 export async function prepareMonthlySummary(
@@ -747,7 +1216,7 @@ export async function prepareMonthlySummary(
   month: number,
   guildId?: string
 ): Promise<MonthlySummaryData> {
-  const logs = await getMonthlyLogs(ctx, userId, platform, year, month)
+  const logs = await getMonthlyLogs(ctx, userId, platform, year, month, guildId)
 
   const countriesSet = new Set<string>()
   const locationsSet = new Set<string>()
@@ -757,20 +1226,10 @@ export async function prepareMonthlySummary(
     locationsSet.add(log.location)
   }
 
-  // 获取用户自定义背景
+  // 获取群组统一背景
   let backgroundImage: string | undefined
   if (guildId) {
-    const adminBackgroundImage = await getAdminBackgroundImage(ctx, platform, guildId)
-    if (adminBackgroundImage) {
-      backgroundImage = adminBackgroundImage
-    } else {
-      const [userState] = await ctx.database.get('pig_user_state', {
-        userId,
-        platform,
-        guildId,
-      })
-      backgroundImage = userState?.backgroundImage
-    }
+    backgroundImage = await getAdminBackgroundImage(ctx, platform, guildId)
   }
 
   return {
