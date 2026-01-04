@@ -10,6 +10,7 @@ import { getSunriseInfo } from './services/sunrise'
 import { triggerTravelSequence, TravelResult, UserInfo } from './services/travel'
 import { prepareMonthlySummary, generateMonthlySummaryCard, getUsersWithLogsInMonth, prepareMonthlySummaryGroup, generateMonthlySummaryGroupCard } from './services/summary'
 import { getPigLeaderboard, getSleepLeaderboard, generatePigLeaderboardCard, generateSleepLeaderboardCard } from './services/leaderboard'
+import { prepareWorldMapData, prepareGuildWorldMapData, generateWorldMapCard } from './services/worldmap'
 import { getAdminBackgroundImage, setGuildBackgroundImage, getGuildBackgroundInfo } from './services/background'
 import { ensurePigSvgAssets, setPigSvgDir } from './services/pig-icon'
 
@@ -437,6 +438,132 @@ export function apply(ctx: Context, config: Config) {
       }
     })
 
+  // 世界足迹地图
+  ctx.command('pig.map [user:user]', '查看用户的世界足迹地图')
+    .alias('世界足迹')
+    .option('all', '-a 显示本群全部成员的足迹')
+    .action(async ({ session, options }, user) => {
+      const platform = session.platform
+      const guildId = session.guildId
+
+      // -a 选项：显示本群全部成员的足迹
+      if (options.all) {
+        if (!guildId) {
+          return '该命令需要在群组中使用'
+        }
+
+        await session.send('正在生成群组世界足迹地图...')
+
+        try {
+          // 获取群组名称和头像
+          let guildName = '本群足迹'
+          let guildAvatarUrl = ''
+          if (session.bot?.getGuild) {
+            try {
+              const guild = await session.bot.getGuild(guildId)
+              guildName = guild.name || guildName
+              guildAvatarUrl = guild.avatar || ''
+            } catch {
+              // ignore
+            }
+          }
+          // OneBot 平台使用 QQ 群头像 API
+          if (!guildAvatarUrl && (platform === 'onebot' || platform === 'qq' || platform.includes('qq'))) {
+            guildAvatarUrl = `https://p.qlogo.cn/gh/${guildId}/${guildId}/640`
+          }
+
+          const data = await prepareGuildWorldMapData(
+            ctx,
+            guildId,
+            platform,
+            guildName,
+            guildAvatarUrl
+          )
+
+          if (data.totalTrips === 0) {
+            return '本群还没有旅行记录'
+          }
+
+          const result = await generateWorldMapCard(ctx, config, data)
+          const base64 = result.buffer.toString('base64')
+          return segment.image(`data:image/png;base64,${base64}`)
+        } catch (e) {
+          ctx.logger('pig').error('Failed to generate guild world map card:', e)
+          return `生成群组世界足迹地图失败: ${e}`
+        }
+      }
+
+      // 个人足迹模式
+      let userId: string
+      let userPlatform: string
+      if (user) {
+        [userPlatform, userId] = user.split(':')
+      } else {
+        userPlatform = platform
+        userId = session.userId
+      }
+
+      let username = userId
+      let avatarUrl = ''
+
+      try {
+        if (session?.userId === userId) {
+          username = session.author?.nickname || session.author?.name || session.username || userId
+          avatarUrl = session.author?.avatar || ''
+        } else {
+          if (userPlatform === 'onebot' || userPlatform === 'qq' || userPlatform.includes('qq')) {
+            avatarUrl = `https://q.qlogo.cn/headimg_dl?dst_uin=${userId}&spec=640`
+          }
+
+          if (session.bot?.getGuildMember && guildId) {
+            try {
+              const member = await session.bot.getGuildMember(guildId, userId)
+              username = member.nick || member.name || member.user?.name || username
+              avatarUrl = avatarUrl || member.user?.avatar || ''
+            } catch {
+              // ignore
+            }
+          }
+
+          if (username === userId && session.bot?.getUser) {
+            try {
+              const userInfo = await session.bot.getUser(userId)
+              username = userInfo.name || username
+              avatarUrl = avatarUrl || userInfo.avatar || ''
+            } catch {
+              // ignore
+            }
+          }
+        }
+      } catch (e) {
+        ctx.logger('pig').warn(`Failed to fetch metadata for user ${userId}: ${e}`)
+      }
+
+      await session.send('正在生成世界足迹地图...')
+
+      try {
+        const data = await prepareWorldMapData(
+          ctx,
+          userId,
+          userPlatform,
+          username,
+          avatarUrl,
+          guildId || undefined
+        )
+
+        if (data.totalTrips === 0) {
+          return '还没有旅行记录'
+        }
+
+        const result = await generateWorldMapCard(ctx, config, data)
+        const base64 = result.buffer.toString('base64')
+        return segment.image(`data:image/png;base64,${base64}`)
+      } catch (e) {
+        ctx.logger('pig').error('Failed to generate world map card:', e)
+        return `生成世界足迹地图失败: ${e}`
+      }
+    })
+
   // 群组背景图片设置（仅管理员可用）
   ctx.command('pig.bg', '设置/查看群组背景图片（仅管理员可用）')
     .option('reset', '-r 重置为默认背景')
@@ -754,63 +881,64 @@ export function apply(ctx: Context, config: Config) {
   })
 
   // Monthly Travel Handbook - 每月1日凌晨生成上月总结
-  ctx.cron('0 0 1 * *', async () => {
-    // 检查是否启用自动月度总结
-    if (!config.monthlySummaryEnabled) {
-      ctx.logger('pig').debug('Monthly summary is disabled, skipping...')
-      return
-    }
-    if (config.monthlySummaryScope === 'guild') {
-      ctx.logger('pig').warn('Monthly summary scope is guild, but cron has no guild context. Skipping...')
-      return
-    }
-
-    const now = new Date()
-    // 计算上个月
-    let year = now.getFullYear()
-    let month = now.getMonth() // getMonth() 是 0-based，这里刚好是上个月
-    if (month === 0) {
-      year -= 1
-      month = 12
-    }
-
-    ctx.logger('pig').info(`Generating monthly travel handbook for ${year}/${month}...`)
-
-    try {
-      const users = await getUsersWithLogsInMonth(ctx, year, month)
-
-      if (users.length === 0) {
-        ctx.logger('pig').info(`No travel logs found for ${year}/${month}`)
+  if (config.monthlySummaryEnabled) {
+    // 使用每日检查避免跨月间隔超出 setTimeout 上限
+    ctx.cron('5 0 * * *', async () => {
+      const now = new Date()
+      if (now.getDate() !== 1) return
+      if (config.monthlySummaryScope === 'guild') {
+        ctx.logger('pig').warn('Monthly summary scope is guild, but cron has no guild context. Skipping...')
         return
       }
 
-      ctx.logger('pig').info(`Found ${users.length} users with travel logs for ${year}/${month}`)
-
-      for (const { userId, platform } of users) {
-        try {
-          const summaryData = await prepareMonthlySummary(
-            ctx,
-            userId,
-            platform,
-            userId,
-            '',
-            year,
-            month
-          )
-          await generateMonthlySummaryCard(ctx, config, summaryData)
-          ctx.logger('pig').info(`Generated summary for user ${userId}`)
-
-          // TODO: 发送到对应群组（需要记录用户所在群组的机制）
-        } catch (e) {
-          ctx.logger('pig').error(`Failed to generate summary for user ${userId}:`, e)
-        }
+      // 计算上个月
+      let year = now.getFullYear()
+      let month = now.getMonth() // getMonth() 是 0-based，这里刚好是上个月
+      if (month === 0) {
+        year -= 1
+        month = 12
       }
 
-      ctx.logger('pig').info(`Monthly handbook generation completed for ${year}/${month}`)
-    } catch (e) {
-      ctx.logger('pig').error('Failed to generate monthly travel handbook:', e)
-    }
-  })
+      ctx.logger('pig').info(`Generating monthly travel handbook for ${year}/${month}...`)
+
+      try {
+        const users = await getUsersWithLogsInMonth(ctx, year, month)
+
+        if (users.length === 0) {
+          ctx.logger('pig').info(`No travel logs found for ${year}/${month}`)
+          return
+        }
+
+        ctx.logger('pig').info(`Found ${users.length} users with travel logs for ${year}/${month}`)
+
+        for (const { userId, platform } of users) {
+          try {
+            const summaryData = await prepareMonthlySummary(
+              ctx,
+              userId,
+              platform,
+              userId,
+              '',
+              year,
+              month
+            )
+            await generateMonthlySummaryCard(ctx, config, summaryData)
+            ctx.logger('pig').info(`Generated summary for user ${userId}`)
+
+            // TODO: 发送到对应群组（需要记录用户所在群组的机制）
+          } catch (e) {
+            ctx.logger('pig').error(`Failed to generate summary for user ${userId}:`, e)
+          }
+        }
+
+        ctx.logger('pig').info(`Monthly handbook generation completed for ${year}/${month}`)
+      } catch (e) {
+        ctx.logger('pig').error('Failed to generate monthly travel handbook:', e)
+      }
+    })
+  } else if (config.debug) {
+    ctx.logger('pig').debug('Monthly summary is disabled, cron not registered.')
+  }
 
   // Daily cleanup of old travel logs
   ctx.cron('0 3 * * *', async () => {

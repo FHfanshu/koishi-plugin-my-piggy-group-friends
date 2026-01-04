@@ -115,19 +115,23 @@ export async function generateFootprintCard(
           },
           redirect: 'follow',
         })
-        const contentType = response.headers?.['content-type'] || ''
-        const contentLength = response.headers?.['content-length'] || 'unknown'
+        // Koishi ctx.http with responseType: 'arraybuffer' may return either:
+        // - A response object with .data property (when using full options)
+        // - Raw ArrayBuffer (in some cases)
+        // We need to handle both cases
+        const rawData = (response as any)?.data ?? response
+        const buffer = Buffer.from(rawData as ArrayBuffer)
+        const mime = sniffMime(buffer)
         if (config.debug) {
           ctx.logger('pig').debug(
-            `Background fetch response: status=${response.status} url=${response.url} content-type=${contentType || 'unknown'} content-length=${contentLength}`
+            `Background fetch response: url=${normalized} detected-mime=${mime} size=${buffer.length}`
           )
         }
-        if (!contentType.startsWith('image/')) {
-          if (config.debug) ctx.logger('pig').warn(`Background fetch returned non-image content-type: ${contentType || 'unknown'}`)
+        // Validate that we got a valid image by checking magic bytes
+        if (mime === 'image/jpeg' && buffer[0] !== 0xFF) {
+          if (config.debug) ctx.logger('pig').warn(`Background fetch returned invalid image data`)
           return null
         }
-        const buffer = Buffer.from(response.data as ArrayBuffer)
-        const mime = sniffMime(buffer)
         if (buffer.length > inlineMaxBytes) {
           if (config.debug) ctx.logger('pig').warn(`Background too large for data URL (${buffer.length} bytes), using remote URL`)
           return normalized
@@ -209,6 +213,20 @@ export async function generateFootprintCard(
     }
   }
 
+  // Fallback gradient background when remote image fails to load
+  const fallbackGradient = 'data:image/svg+xml,' + encodeURIComponent(`
+    <svg xmlns="http://www.w3.org/2000/svg" width="1080" height="1920">
+      <defs>
+        <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+          <stop offset="0%" style="stop-color:#9ca3af;stop-opacity:1" />
+          <stop offset="50%" style="stop-color:#6b7280;stop-opacity:1" />
+          <stop offset="100%" style="stop-color:#4b5563;stop-opacity:1" />
+        </linearGradient>
+      </defs>
+      <rect width="100%" height="100%" fill="url(#bg)"/>
+    </svg>
+  `.trim())
+
   if (bgImage) {
     bgImage = normalizeImageUrl(bgImage)
     const fetched = await fetchToDataUrl(bgImage, { forceServerFetch: true })
@@ -218,13 +236,17 @@ export async function generateFootprintCard(
         ctx.logger('pig').debug(`Successfully converted background to base64 (length=${fetched.length})`)
       }
     } else {
-      // If fetch failed, just use the normalized URL directly and let puppeteer try
-      // Skip fallback fetch to avoid double timeout delays
-      if (config.debug) ctx.logger('pig').warn('Background fetch failed, proceeding with URL directly (no fallback fetch)')
+      // Server-side fetch failed - use fallback gradient instead of broken remote URL
+      // The remote URL would likely also fail in Puppeteer due to network issues
+      if (config.debug) ctx.logger('pig').warn('Background fetch failed, using fallback gradient')
+      bgImage = fallbackGradient
     }
     if (config.debug) {
       ctx.logger('pig').debug(`Final background value: ${bgImage ? (bgImage.startsWith('data:') ? `data-url(${bgImage.length})` : bgImage) : 'none'}`)
     }
+  } else {
+    // No background URL provided at all - use fallback gradient
+    bgImage = fallbackGradient
   }
 
   // Format date in Chinese

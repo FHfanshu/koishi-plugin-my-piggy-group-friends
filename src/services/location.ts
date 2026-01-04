@@ -186,16 +186,16 @@ export async function generateLocationWithLLM(
 
         let photoUrl: string | null = null
         for (const query of searchQueries) {
-          // 1. Try Unsplash first
-          if (config.unsplashAccessKey) {
-            if (config.debug) ctx.logger('pig').debug(`Searching Unsplash for: ${query}`)
-            photoUrl = await searchUnsplashPhoto(ctx, config.unsplashAccessKey, query, config.debug)
-          }
-
-          // 2. Try Pexels as fallback
-          if (!photoUrl && config.pexelsApiKey) {
+          // 1. Try Pexels first (more stable network access)
+          if (config.pexelsApiKey) {
             if (config.debug) ctx.logger('pig').debug(`Searching Pexels for: ${query}`)
             photoUrl = await searchPexelsPhoto(ctx, config.pexelsApiKey, query, config.debug)
+          }
+
+          // 2. Try Unsplash as fallback
+          if (!photoUrl && config.unsplashAccessKey) {
+            if (config.debug) ctx.logger('pig').debug(`Searching Unsplash for: ${query}`)
+            photoUrl = await searchUnsplashPhoto(ctx, config.unsplashAccessKey, query, config.debug)
           }
 
           if (photoUrl) {
