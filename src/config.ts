@@ -34,6 +34,9 @@ export interface Config {
   monthlySummaryScope: 'global' | 'guild'
   // Auto wake-up detection (experimental)
   experimentalAutoDetect: boolean
+  // Silent record (after sunrise first message)
+  silentRecordEnabled: boolean
+  silentRecordAutoTravel: boolean
   // Night owl detection (熬夜检测)
   nightOwlEnabled: boolean
   nightOwlStartHour: number
@@ -77,6 +80,11 @@ export const Config: Schema<Config> = Schema.intersect([
     defaultLng: Schema.number().default(120).description('默认经度（东经为正）'),
     abnormalThreshold: Schema.number().default(3).description('作息异常判定阈值（小时）'),
   }).description('自动检测（实验性）🧪'),
+
+  Schema.object({
+    silentRecordEnabled: Schema.boolean().default(true).description('启用后台静默记录用户起床时间'),
+    silentRecordAutoTravel: Schema.boolean().default(false).description('静默记录时同时触发虚拟旅行卡片'),
+  }).description('静默记录 💤'),
 
   Schema.object({
     nightOwlEnabled: Schema.boolean().default(true).description('启用熬夜检测（在深夜时段发消息会被记录）'),

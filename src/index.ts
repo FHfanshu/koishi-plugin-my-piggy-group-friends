@@ -79,6 +79,25 @@ export function apply(ctx: Context, config: Config) {
   const travelLocks = new Map<string, number>()
   const LOCK_DURATION_MS = 60 * 1000 // 60秒锁定期
 
+  // 用户每日状态缓存 (key: `${platform}:${userId}`)
+  const dailyUserState = new Map<string, {
+    recordedToday: boolean
+    cardSentToday: boolean
+    lastSunrise: Date | null
+  }>()
+
+  // 获取今日日出时间（带缓存）
+  let cachedSunriseDate: string | null = null
+  let cachedSunrise: Date | null = null
+  const getTodaySunrise = async (): Promise<Date> => {
+    const today = new Date().toDateString()
+    if (cachedSunriseDate === today && cachedSunrise) return cachedSunrise
+    const info = await getSunriseInfo(ctx, config.defaultLat, config.defaultLng)
+    cachedSunrise = info.sunrise
+    cachedSunriseDate = today
+    return cachedSunrise
+  }
+
   ctx.command('pig [user:user]', '虚拟旅行')
     .alias('猪醒')
     .action(async ({ session }, user) => {
@@ -720,7 +739,64 @@ export function apply(ctx: Context, config: Config) {
         ctx.logger('pig').error(`Failed to save guild background: ${e}`)
         return `保存群组背景图片失败: ${e}`
       }
+    }) 
+
+  // 后台静默记录：日出后首条消息
+  ctx.middleware(async (session, next) => {
+    if (!config.silentRecordEnabled) return next()
+    if (!session.userId || !session.guildId) return next()
+
+    const userKey = `${session.platform}:${session.userId}`
+    const state = dailyUserState.get(userKey)
+    if (state?.recordedToday) return next()
+
+    let sunrise: Date
+    try {
+      sunrise = await getTodaySunrise()
+    } catch (e) {
+      ctx.logger('pig').warn(`Failed to fetch sunrise info: ${e}`)
+      return next()
+    }
+
+    const now = new Date()
+    if (now < sunrise) return next()
+
+    try {
+      await ctx.database.upsert('pig_user_state', [{
+        platform: session.platform,
+        userId: session.userId,
+        guildId: session.guildId || '',
+        lastWakeUp: now,
+        lastSunrise: sunrise,
+      }], ['platform', 'userId', 'guildId'])
+    } catch (e) {
+      ctx.logger('pig').warn(`Failed to record wake-up time for ${session.userId}: ${e}`)
+      return next()
+    }
+
+    dailyUserState.set(userKey, {
+      recordedToday: true,
+      cardSentToday: state?.cardSentToday ?? false,
+      lastSunrise: sunrise,
     })
+
+    if (config.silentRecordAutoTravel && !state?.cardSentToday) {
+      const latestState = dailyUserState.get(userKey)
+      if (latestState) latestState.cardSentToday = true
+
+      const userInfo: UserInfo = {
+        userId: session.userId,
+        username: session.author?.nickname || session.author?.name || session.username || session.userId,
+        avatarUrl: session.author?.avatar || ''
+      }
+
+      void triggerTravelSequence(ctx, config, userInfo, session.platform, session.guildId || '')
+        .then(result => session.send(formatTravelMessage(result, session.userId, config)))
+        .catch(err => ctx.logger('pig').warn(`Failed to auto travel for ${session.userId}: ${err}`))
+    }
+
+    return next()
+  }, true)
 
   ctx.middleware(async (session, next) => {
     // 如果没有开启实验性自动检测功能，直接跳过
@@ -878,6 +954,14 @@ export function apply(ctx: Context, config: Config) {
     await ctx.database.upsert('pig_user_state', [updateData], ['platform', 'userId', 'guildId'])
 
     return next()
+  })
+
+  // 每日重置静默记录状态
+  ctx.cron('1 0 * * *', () => {
+    dailyUserState.clear()
+    cachedSunrise = null
+    cachedSunriseDate = null
+    ctx.logger('pig').info('Daily user state cache cleared')
   })
 
   // Monthly Travel Handbook - 每月1日凌晨生成上月总结
