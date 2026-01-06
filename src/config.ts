@@ -18,6 +18,7 @@ export interface Config {
   llmLocationEnabled: boolean
   llmLocationModel: string
   llmLocationCustomContext: string
+  llmFailureCooldownMs: number
   // Image Search
   imageSearchPrompt: string
   // Unsplash API
@@ -27,6 +28,7 @@ export interface Config {
   // Background fetch behavior
   backgroundFetchMode: 'auto' | 'always' | 'never'
   backgroundFetchTimeoutMs: number
+  backgroundInlineMaxBytes: number
   // Travel log retention
   logRetentionDays: number
   // Monthly summary
@@ -34,6 +36,7 @@ export interface Config {
   monthlySummaryScope: 'global' | 'guild'
   // Auto wake-up detection (experimental)
   experimentalAutoDetect: boolean
+  experimentalAutoDetectScope: 'guild' | 'all'
   // Silent record (after sunrise first message)
   silentRecordEnabled: boolean
   silentRecordAutoTravel: boolean
@@ -56,6 +59,7 @@ export const Config: Schema<Config> = Schema.intersect([
     llmLocationEnabled: Schema.boolean().default(false).description('启用后使用 LLM 动态生成全球旅行地点，关闭则使用预设地点库'),
     llmLocationModel: Schema.dynamic('model').description('用于生成地点的模型（推荐使用快速模型如 gemini-flash）'),
     llmLocationCustomContext: Schema.string().role('textarea').default('').description('自定义生成上下文（如：关注北欧神话、赛博朋克风格建筑等，留空则完全随机）'),
+    llmFailureCooldownMs: Schema.number().default(300000).description('LLM 调用失败后的冷却时间（毫秒），避免短时间内反复触发失败请求'),
     imageSearchPrompt: Schema.string().default('{landmark} {country} landscape').description('搜图关键词模板（可用变量：{landmark} 地标英文名, {country} 国家英文名, {city} 城市英文名）'),
     unsplashAccessKey: Schema.string().role('secret').default('').description('Unsplash API Access Key (可选)'),
     pexelsApiKey: Schema.string().role('secret').default('').description('Pexels API Key (可选，作为 Unsplash 的补充)'),
@@ -65,6 +69,7 @@ export const Config: Schema<Config> = Schema.intersect([
       Schema.const('never').description('不进行服务端拉取，直接使用 URL'),
     ]).default('auto').description('背景图服务端拉取策略'),
     backgroundFetchTimeoutMs: Schema.number().default(8000).description('背景图服务端拉取超时（毫秒）'),
+    backgroundInlineMaxBytes: Schema.number().default(8 * 1024 * 1024).description('背景图内联为 data URL 的最大字节数（过大将回退为远程 URL）'),
   }).description('地点与图片 🌍'),
 
   Schema.object({
@@ -75,6 +80,10 @@ export const Config: Schema<Config> = Schema.intersect([
 
   Schema.object({
     experimentalAutoDetect: Schema.boolean().default(false).description('自动检测用户首条消息并判断作息是否异常'),
+    experimentalAutoDetectScope: Schema.union([
+      Schema.const('guild').description('仅群聊消息触发检测'),
+      Schema.const('all').description('群聊与私聊均触发检测'),
+    ]).default('guild').description('自动检测触发范围'),
     sunriseApi: Schema.string().default('https://api.sunrise-sunset.org/json').description('日出日落 API 地址'),
     defaultLat: Schema.number().default(30).description('默认纬度（北纬为正）'),
     defaultLng: Schema.number().default(120).description('默认经度（东经为正）'),

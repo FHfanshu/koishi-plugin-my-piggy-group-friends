@@ -98,14 +98,28 @@ export function apply(ctx: Context, config: Config) {
     return cachedSunrise
   }
 
-  ctx.command('pig [user:user]', '虚拟旅行')
-    .alias('猪醒')
-    .action(async ({ session }, user) => {
+  const resolveUserArg = (argv: any, user?: string) => {
+    if (!user) return null
+    if (user.includes(':') && !user.startsWith('<')) return user
+    const parsed = ctx.$commander.parseValue(user, 'argument', argv, { name: 'user', type: 'user' }) as string | undefined
+    if (!parsed) return null
+    return parsed
+  }
+
+  ctx.command('pig', '虚拟旅行', { checkArgCount: false })
+    .alias('猪醒', 'pig.travel')
+    .usage('猪醒 [@用户]')
+    .example('猪醒')
+    .example('猪醒 @某人')
+    .action(async (argv, user) => {
+      const { session } = argv
       // 如果没有指定用户，默认使用发送者自己
       let platform: string
       let userId: string
       if (user) {
-        [platform, userId] = user.split(':')
+        const parsed = resolveUserArg(argv, user)
+        if (!parsed) return argv.error ?? '参数 user 输入无效，请指定正确的用户。'
+        ;[platform, userId] = parsed.split(':')
       } else {
         platform = session.platform
         userId = session.userId
@@ -801,6 +815,7 @@ export function apply(ctx: Context, config: Config) {
   ctx.middleware(async (session, next) => {
     // 如果没有开启实验性自动检测功能，直接跳过
     if (!config.experimentalAutoDetect) return next()
+    if (config.experimentalAutoDetectScope !== 'all' && !session.guildId) return next()
 
     const hasContent = !!session.content
     const hasElements = Array.isArray(session.elements) && session.elements.length > 0

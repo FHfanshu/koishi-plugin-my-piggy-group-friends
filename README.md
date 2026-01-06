@@ -86,9 +86,11 @@ npm install koishi-plugin-my-pig-group-friends
 | `llmLocationEnabled` | `false` | 启用 LLM 动态生成地点 |
 | `llmLocationModel` | - | LLM 模型（推荐 gemini-flash 等快速模型） |
 | `llmLocationCustomContext` | - | 自定义偏好（如：北欧风格、赛博朋克建筑等） |
+| `llmFailureCooldownMs` | `300000` | LLM 调用失败后的冷却时间（毫秒） |
 | `imageSearchPrompt` | `{landmark} {country} landscape` | 图片搜索关键词模板 |
 | `unsplashAccessKey` | - | Unsplash API 密钥 |
 | `pexelsApiKey` | - | Pexels API 密钥（备用图源） |
+| `backgroundInlineMaxBytes` | `8388608` | 背景图内联为 data URL 的最大字节数 |
 
 ### AI 生图（可选）
 
@@ -103,6 +105,7 @@ npm install koishi-plugin-my-pig-group-friends
 | 配置项 | 默认值 | 说明 |
 |--------|--------|------|
 | `experimentalAutoDetect` | `false` | 自动检测作息异常 |
+| `experimentalAutoDetectScope` | `guild` | 触发范围：仅群聊（`guild`）或群聊+私聊（`all`） |
 | `abnormalThreshold` | `3` | 异常判定阈值（小时） |
 
 ### 存储设置

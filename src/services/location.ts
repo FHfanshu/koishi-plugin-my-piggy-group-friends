@@ -6,6 +6,8 @@ import { SystemMessage, HumanMessage } from '@langchain/core/messages'
 import { searchUnsplashPhoto } from './unsplash'
 import { searchPexelsPhoto } from './pexels'
 
+let llmCooldownUntil = 0
+
 // 地点类别，用于增加多样性
 const LOCATION_CATEGORIES = [
   '自然奇观（峡谷、瀑布、火山、冰川、沙漠绿洲等）',
@@ -114,6 +116,12 @@ export async function generateLocationWithLLM(
     return getRandomStaticLocation()
   }
 
+  const cooldownMs = config.llmFailureCooldownMs ?? 0
+  if (cooldownMs > 0 && Date.now() < llmCooldownUntil) {
+    if (config.debug) ctx.logger('pig').debug('LLM location generation in cooldown, using static locations')
+    return getRandomStaticLocation()
+  }
+
   try {
     ctx.logger('pig').info(`Using LLM to generate location with model: ${config.llmLocationModel}`)
 
@@ -122,6 +130,7 @@ export async function generateLocationWithLLM(
 
     if (!model) {
       ctx.logger('pig').warn(`Failed to create model: ${config.llmLocationModel}`)
+      if (cooldownMs > 0) llmCooldownUntil = Date.now() + cooldownMs
       return getRandomStaticLocation()
     }
 
@@ -158,6 +167,7 @@ export async function generateLocationWithLLM(
     const location = parseLocationResponse(content)
 
     if (location) {
+      llmCooldownUntil = 0
       ctx.logger('pig').info(`LLM generated location: ${location.landmarkZh} (${location.landmark}), ${location.countryZh}`)
 
       // Try to get a real photo URL from APIs with multiple search attempts
@@ -217,6 +227,7 @@ export async function generateLocationWithLLM(
     return getRandomStaticLocation()
   } catch (e) {
     ctx.logger('pig').error(`LLM location generation failed: ${e}`)
+    if (cooldownMs > 0) llmCooldownUntil = Date.now() + cooldownMs
     return getRandomStaticLocation()
   }
 }

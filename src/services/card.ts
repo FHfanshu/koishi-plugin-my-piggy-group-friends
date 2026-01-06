@@ -65,7 +65,7 @@ export async function generateFootprintCard(
     return 'image/jpeg'
   }
 
-  const inlineMaxBytes = 2 * 1024 * 1024
+  const inlineMaxBytes = config.backgroundInlineMaxBytes ?? 2 * 1024 * 1024
   const fetchTimeoutMs = config.backgroundFetchTimeoutMs ?? 8000
   const shouldServerFetch = (url: string) => {
     const mode = config.backgroundFetchMode || 'auto'
@@ -229,7 +229,7 @@ export async function generateFootprintCard(
 
   if (bgImage) {
     bgImage = normalizeImageUrl(bgImage)
-    const fetched = await fetchToDataUrl(bgImage, { forceServerFetch: true })
+    const fetched = await fetchToDataUrl(bgImage, { forceServerFetch: config.backgroundFetchMode === 'always' })
     if (fetched) {
       bgImage = fetched
       if (config.debug && fetched.startsWith('data:')) {
@@ -1089,134 +1089,6 @@ ${fontFaceCss}
   </div>
 
   <script>
-    function clamp(value, min, max) {
-      return Math.min(max, Math.max(min, value));
-    }
-
-    function rgbToHsl(r, g, b) {
-      r /= 255; g /= 255; b /= 255;
-      const max = Math.max(r, g, b), min = Math.min(r, g, b);
-      let h = 0, s = 0;
-      const l = (max + min) / 2;
-      if (max !== min) {
-        const d = max - min;
-        s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
-        switch (max) {
-          case r: h = (g - b) / d + (g < b ? 6 : 0); break;
-          case g: h = (b - r) / d + 2; break;
-          case b: h = (r - g) / d + 4; break;
-        }
-        h /= 6;
-      }
-      return [h, s, l];
-    }
-
-    function hslToRgb(h, s, l) {
-      let r, g, b;
-      if (s === 0) {
-        r = g = b = l;
-      } else {
-        const hue2rgb = (p, q, t) => {
-          if (t < 0) t += 1;
-          if (t > 1) t -= 1;
-          if (t < 1 / 6) return p + (q - p) * 6 * t;
-          if (t < 1 / 2) return q;
-          if (t < 2 / 3) return p + (q - p) * (2 / 3 - t) * 6;
-          return p;
-        };
-        const q = l < 0.5 ? l * (1 + s) : l + s - l * s;
-        const p = 2 * l - q;
-        r = hue2rgb(p, q, h + 1 / 3);
-        g = hue2rgb(p, q, h);
-        b = hue2rgb(p, q, h - 1 / 3);
-      }
-      return [Math.round(r * 255), Math.round(g * 255), Math.round(b * 255)];
-    }
-
-    function averageColor(img) {
-      if (!img || !img.naturalWidth || !img.naturalHeight) return null;
-      const size = 32; // 进一步缩小尺寸以提高性能
-      const canvas = document.createElement('canvas');
-      canvas.width = size;
-      canvas.height = size;
-      const ctx = canvas.getContext('2d', { willReadFrequently: true });
-      if (!ctx) return null;
-      try {
-        // 使用 try-catch 捕获可能的 CORS 错误 (Tainted Canvas)
-        ctx.drawImage(img, 0, 0, size, size);
-        const imageData = ctx.getImageData(0, 0, size, size);
-        const data = imageData.data;
-        let r = 0, g = 0, b = 0, count = 0;
-        for (let i = 0; i < data.length; i += 4) {
-          const alpha = data[i + 3];
-          if (alpha < 16) continue;
-          r += data[i];
-          g += data[i + 1];
-          b += data[i + 2];
-          count++;
-        }
-        if (!count) return null;
-        return [r / count, g / count, b / count];
-      } catch (e) {
-        // 静默失败，不打印日志以避免被 Puppeteer 捕获为错误
-        return null;
-      }
-    }
-
-    function mixColors(a, b, weight) {
-      if (!a && !b) return null;
-      if (!a) return b;
-      if (!b) return a;
-      const w = clamp(weight, 0, 1);
-      return [
-        a[0] * w + b[0] * (1 - w),
-        a[1] * w + b[1] * (1 - w),
-        a[2] * w + b[2] * (1 - w),
-      ];
-    }
-
-    function luminance(rgb) {
-      const r = rgb[0] / 255;
-      const g = rgb[1] / 255;
-      const b = rgb[2] / 255;
-      return 0.2126 * r + 0.7152 * g + 0.0722 * b;
-    }
-
-    function monetize(rgb) {
-      const [h, s, l] = rgbToHsl(rgb[0], rgb[1], rgb[2]);
-      const softS = clamp(s * 0.75, 0.16, 0.65);
-      const softL = clamp(l + 0.12, 0.4, 0.78);
-      return hslToRgb(h, softS, softL);
-    }
-
-    function applyDateColor() {
-      try {
-        const avatar = document.querySelector('.avatar');
-        const bg = document.querySelector('.bg-image');
-        const avatarColor = averageColor(avatar);
-        const bgColor = averageColor(bg);
-        const mixed = bgColor || avatarColor || null;
-        if (!mixed) return;
-        const blended = avatarColor && bgColor ? mixColors(bgColor, avatarColor, 0.8) : mixed;
-        if (!blended) return; // 修正变量检查
-        const base = monetize(blended);
-        const light = monetize(mixColors(base, [255, 255, 255], 0.6));
-        const accent = mixColors(base, [255, 255, 255], 0.05);
-        const accentStrong = mixColors(base, [255, 255, 255], 0);
-        const textColor = luminance(accent) > 0.6 ? [20, 28, 36] : [245, 248, 255];
-        const root = document.documentElement;
-        root.style.setProperty('--date-color', 'rgb(' + Math.round(base[0]) + ', ' + Math.round(base[1]) + ', ' + Math.round(base[2]) + ')');
-        root.style.setProperty('--date-color-light', 'rgb(' + Math.round(light[0]) + ', ' + Math.round(light[1]) + ', ' + Math.round(light[2]) + ')');
-        const tint = mixColors(base, [255, 255, 255], 0.35);
-        root.style.setProperty('--card-tint', Math.round(tint[0]) + ', ' + Math.round(tint[1]) + ', ' + Math.round(tint[2]));
-        root.style.setProperty('--accent-bg', 'rgba(' + Math.round(accent[0]) + ', ' + Math.round(accent[1]) + ', ' + Math.round(accent[2]) + ', 0.3)');
-        root.style.setProperty('--accent-bg-strong', 'rgba(' + Math.round(accentStrong[0]) + ', ' + Math.round(accentStrong[1]) + ', ' + Math.round(accentStrong[2]) + ', 0.45)');
-        root.style.setProperty('--accent-text', 'rgb(' + Math.round(textColor[0]) + ', ' + Math.round(textColor[1]) + ', ' + Math.round(textColor[2]) + ')');
-      } catch (e) {
-        // 全局捕获异常，确保不阻塞渲染过程
-      }
-    }
-
     async function waitForImages() {
       console.log('Starting waitForImages...');
       // 1. Wait for standard img tags
@@ -1268,8 +1140,6 @@ ${fontFaceCss}
         ...promises,
         document.fonts.ready
       ]);
-
-      applyDateColor();
 
       console.log('All images and fonts loaded');
       // Extra safety delay for rendering (reduced from 400ms)
