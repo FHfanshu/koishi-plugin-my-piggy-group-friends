@@ -1,0 +1,40 @@
+{
+  "name": "koishi-plugin-my-pig-group-friends",
+  "version": "1.2.14",
+  "main": "lib/index.js",
+  "types": "lib/index.d.ts",
+  "files": [
+    "lib",
+    "dist",
+    "pig_svgs"
+  ],
+  "license": "MIT",
+  "scripts": {
+    "build": "yakumo build"
+  },
+  "dependencies": {
+    "@langchain/core": "^0.3.0",
+    "koishi-plugin-cron": "^3.1.0",
+    "koishi-plugin-glyph": "^3.0.6",
+    "koishi-thirdeye": "^11.0.0"
+  },
+  "peerDependencies": {
+    "koishi": "^4.17.0"
+  },
+  "koishi": {
+    "description": {
+      "zh": "猪醒 - 虚拟旅行打卡插件，让你的猪猪群友环游世界"
+    },
+    "service": {
+      "required": [
+        "database",
+        "cron",
+        "puppeteer"
+      ],
+      "optional": [
+        "chatluna",
+        "chatluna_storage"
+      ]
+    }
+  }
+}
