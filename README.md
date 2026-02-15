@@ -72,49 +72,107 @@ npm install koishi-plugin-my-pig-group-friends
 
 ## 配置说明
 
-### 基础设置
+### 最小可用配置（示例）
+
+```yaml
+my-pig-group-friends:
+  outputMode: image
+  travelMessageTemplate: 去了 {landmark}，{country}！📸
+  llmLocationEnabled: false
+  worldMapUseTianditu: false
+  worldMapOfficialOnly: false
+  monthlySummaryEnabled: false
+  monthlySummaryScope: global
+  debug: false
+```
+
+### 进阶配置（示例）
+
+```yaml
+my-pig-group-friends:
+  outputMode: image
+  travelMessageTemplate: 去了 {landmark}，{country}！📸
+
+  llmLocationEnabled: true
+  llmLocationModel: your-provider/your-model
+  llmLocationCustomContext: 偏好北欧和小众自然景观
+  llmFailureCooldownMs: 300000
+  imageSearchPrompt: '{landmark} {country} landscape'
+  unsplashAccessKey: ''
+  pexelsApiKey: ''
+
+  backgroundFetchMode: auto
+  backgroundFetchTimeoutMs: 8000
+  backgroundInlineMaxBytes: 8388608
+  backgroundStoragePath: ./data/pig/backgrounds
+
+  worldMapUseTianditu: true
+  tiandituToken: ''
+  tiandituTimeoutMs: 5000
+  worldMapOfficialOnly: false
+
+  aigcEnabled: false
+  aigcChannel: ''
+  aigcPrompt: 一个可爱的卡通小猪正在 {country} 的 {landmark} 前面自拍，阳光明媚，旅游照片风格
+
+  experimentalAutoDetect: false
+  experimentalAutoDetectScope: guild
+  abnormalThreshold: 3
+  defaultLat: 30
+  defaultLng: 120
+
+  silentRecordEnabled: true
+  silentRecordAutoTravel: false
+
+  nightOwlEnabled: true
+  nightOwlStartHour: 0
+  nightOwlEndHour: 5
+  nightOwlGrayscaleAvatar: false
+
+  useStorageService: true
+  storageCacheHours: 24
+  logRetentionDays: 45
+  monthlySummaryEnabled: false
+  monthlySummaryScope: global
+  debug: false
+```
+
+### 常显配置项
 
 | 配置项 | 默认值 | 说明 |
 |--------|--------|------|
 | `outputMode` | `image` | 输出模式：`image` 生成卡片，`text` 纯文本 |
-| `travelMessageTemplate` | `去了 {landmark}，{country}！` | 旅行消息模板 |
+| `travelMessageTemplate` | `去了 {landmark}，{country}！📸` | 旅行消息模板 |
+| `backgroundFetchMode` | `auto` | 背景图拉取策略（auto/always/never） |
+| `backgroundFetchTimeoutMs` | `8000` | 背景图拉取超时（毫秒） |
+| `backgroundInlineMaxBytes` | `8388608` | 背景图转 data URL 的最大字节数 |
+| `backgroundStoragePath` | `./data/pig/backgrounds` | 自定义背景图存储路径 |
+| `worldMapOfficialOnly` | `false` | 仅展示官方底图，不做国家填色高亮 |
+| `defaultLat` | `30` | 默认纬度（用于日出相关逻辑） |
+| `defaultLng` | `120` | 默认经度（用于日出相关逻辑） |
+| `logRetentionDays` | `45` | 旅行日志保留天数 |
+| `monthlySummaryEnabled` | `false` | 是否启用每月自动总结（不影响手动 `pig.summary`） |
+| `monthlySummaryScope` | `global` | 月度总结范围：`global`/`guild` |
+| `debug` | `false` | 输出详细调试日志 |
 
-### 地点与图片
+### 按开关显示的配置项
 
-| 配置项 | 默认值 | 说明 |
-|--------|--------|------|
-| `llmLocationEnabled` | `false` | 启用 LLM 动态生成地点 |
-| `llmLocationModel` | - | LLM 模型（推荐 gemini-flash 等快速模型） |
-| `llmLocationCustomContext` | - | 自定义偏好（如：北欧风格、赛博朋克建筑等） |
-| `llmFailureCooldownMs` | `300000` | LLM 调用失败后的冷却时间（毫秒） |
-| `imageSearchPrompt` | `{landmark} {country} landscape` | 图片搜索关键词模板 |
-| `unsplashAccessKey` | - | Unsplash API 密钥 |
-| `pexelsApiKey` | - | Pexels API 密钥（备用图源） |
-| `backgroundInlineMaxBytes` | `8388608` | 背景图内联为 data URL 的最大字节数 |
+| 开关 | 子项（仅开关为 `true` 时显示） |
+|------|-------------------------------|
+| `llmLocationEnabled` | `llmLocationModel`、`llmLocationCustomContext`、`llmFailureCooldownMs`、`imageSearchPrompt`、`unsplashAccessKey`、`pexelsApiKey` |
+| `aigcEnabled` | `aigcChannel`、`aigcPrompt` |
+| `worldMapUseTianditu` | `tiandituToken`、`tiandituTimeoutMs` |
+| `experimentalAutoDetect` | `experimentalAutoDetectScope`、`abnormalThreshold` |
+| `silentRecordEnabled` | `silentRecordAutoTravel` |
+| `nightOwlEnabled` | `nightOwlStartHour`、`nightOwlEndHour`、`nightOwlGrayscaleAvatar` |
+| `useStorageService` | `storageCacheHours` |
 
-### AI 生图（可选）
+### 废弃兼容字段
 
-| 配置项 | 默认值 | 说明 |
-|--------|--------|------|
-| `aigcEnabled` | `false` | 启用 AI 绘图 |
-| `aigcChannel` | - | media-luna 绘图渠道 |
-| `aigcPrompt` | `一个可爱的卡通小猪正在...` | 绘图提示词模板 |
+以下字段仅兼容旧配置，当前版本已忽略，后续版本将移除：
 
-### 自动检测（实验性）
-
-| 配置项 | 默认值 | 说明 |
-|--------|--------|------|
-| `experimentalAutoDetect` | `false` | 自动检测作息异常 |
-| `experimentalAutoDetectScope` | `guild` | 触发范围：仅群聊（`guild`）或群聊+私聊（`all`） |
-| `abnormalThreshold` | `3` | 异常判定阈值（小时） |
-
-### 存储设置
-
-| 配置项 | 默认值 | 说明 |
-|--------|--------|------|
-| `useStorageService` | `true` | 使用存储服务缓存图片 |
-| `storageCacheHours` | `24` | 图片缓存时间（小时） |
-| `logRetentionDays` | `45` | 旅行记录保留天数 |
+- `sunriseApi`
+- `logPath`
 
 ## 获取 API 密钥
 

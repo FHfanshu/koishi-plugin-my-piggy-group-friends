@@ -478,6 +478,7 @@ export const COUNTRY_NAME_TO_ISO: Record<string, string> = Object.entries(
 const buildPrimaryNamesByIso = () => {
   const english = new Map<string, string>()
   const chinese = new Map<string, string>()
+  const englishAliases = new Map<string, Set<string>>()
 
   for (const [name, iso] of Object.entries(RAW_COUNTRY_NAME_TO_ISO)) {
     if (!english.has(iso) && /[A-Za-z]/.test(name)) {
@@ -486,9 +487,14 @@ const buildPrimaryNamesByIso = () => {
     if (!chinese.has(iso) && /[\u4e00-\u9fff]/.test(name)) {
       chinese.set(iso, name)
     }
+    if (/[A-Za-z]/.test(name)) {
+      const set = englishAliases.get(iso) || new Set<string>()
+      set.add(name)
+      englishAliases.set(iso, set)
+    }
   }
 
-  return { english, chinese }
+  return { english, chinese, englishAliases }
 }
 
 const PRIMARY_NAMES_BY_ISO = buildPrimaryNamesByIso()
@@ -507,4 +513,10 @@ export function getPrimaryCountryNameEn(isoCode: string): string | null {
 export function getPrimaryCountryNameZh(isoCode: string): string | null {
   if (!isoCode) return null
   return PRIMARY_NAMES_BY_ISO.chinese.get(isoCode.toUpperCase()) ?? null
+}
+
+export function getCountryAliasNamesEn(isoCode: string): string[] {
+  if (!isoCode) return []
+  const set = PRIMARY_NAMES_BY_ISO.englishAliases.get(isoCode.toUpperCase())
+  return set ? Array.from(set.values()) : []
 }

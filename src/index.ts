@@ -45,6 +45,21 @@ function formatTravelMessage(result: TravelResult, userId: string, config: Confi
 
 export function apply(ctx: Context, config: Config) {
   ctx.logger('pig').info('my-pig-group-friends plugin is loading...')
+
+  const deprecatedConfigKeys: string[] = []
+  if (typeof config.sunriseApi === 'string' && config.sunriseApi.trim()) {
+    deprecatedConfigKeys.push('sunriseApi')
+  }
+  if (typeof config.logPath === 'string' && config.logPath.trim()) {
+    deprecatedConfigKeys.push('logPath')
+  }
+  if (deprecatedConfigKeys.length) {
+    ctx.logger('pig').warn(
+      `检测到已废弃配置项：${deprecatedConfigKeys.join(', ')}。` +
+      '这些字段在当前版本已忽略，仅做兼容保留，并将在下个版本移除。'
+    )
+  }
+
   applyDatabase(ctx)
   const dataRoot = resolve(ctx.baseDir ?? process.cwd(), 'data', 'pig', 'svgs')
   const cwdRoot = resolve(process.cwd(), 'data', 'pig', 'svgs')

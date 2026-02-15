@@ -25,18 +25,29 @@ const LOCATION_CATEGORIES = [
 // 大洲列表，用于地理分散
 const CONTINENTS = ['亚洲', '欧洲', '非洲', '北美洲', '南美洲', '大洋洲', '南极洲']
 
+interface SunriseTimezoneHint {
+  utcOffsetRange: string
+  regionHint: string
+  beijingTime: string
+  beijingHour: number
+  idealOffset: number
+  minOffset: number
+  maxOffset: number
+}
+
 /**
- * 根据当前 UTC 时间，计算正处于日出时段（当地时间约 5:00-7:00）的时区范围
+ * 以东八区当前时间为基准，计算“此刻正处于日出时段（当地时间约 5:00-7:00）”的时区范围
  * 返回 UTC 偏移量范围，例如 "UTC+5 到 UTC+7"
  */
-function getSunriseTimezoneHint(): { utcOffsetRange: string; regionHint: string } {
+function getSunriseTimezoneHint(): SunriseTimezoneHint {
   const now = new Date()
-  const utcHour = now.getUTCHours()
+  const beijingNow = new Date(now.getTime() + 8 * 60 * 60 * 1000)
+  const beijingHour = beijingNow.getUTCHours()
+  const beijingMinute = beijingNow.getUTCMinutes()
 
-  // 日出大约在当地时间 6:00（我们取 5:00-7:00 的范围）
-  // 如果当地时间是 6:00，那么 UTC 偏移 = 当地时间 - UTC 时间 = 6 - utcHour
+  // 日出中心时间按当地 06:00 估算，目标偏移 = 06:00 - 当前东八区小时 + 8
   const targetLocalHour = 6
-  const idealOffset = targetLocalHour - utcHour
+  const idealOffset = targetLocalHour - beijingHour + 8
 
   // 标准化到 -12 到 +14 范围
   const normalizeOffset = (offset: number) => {
@@ -61,14 +72,20 @@ function getSunriseTimezoneHint(): { utcOffsetRange: string; regionHint: string 
   }
 
   const formatOffset = (offset: number) => offset >= 0 ? `UTC+${offset}` : `UTC${offset}`
+  const beijingTime = `${String(beijingHour).padStart(2, '0')}:${String(beijingMinute).padStart(2, '0')}`
 
   return {
     utcOffsetRange: `${formatOffset(minOffset)} 到 ${formatOffset(maxOffset)}`,
-    regionHint: getRegionByOffset(idealOffset)
+    regionHint: getRegionByOffset(idealOffset),
+    beijingTime,
+    beijingHour,
+    idealOffset,
+    minOffset,
+    maxOffset,
   }
 }
 
-function getRandomPromptHints(): { category: string; continent: string; avoidCountries: string; sunriseHint: { utcOffsetRange: string; regionHint: string } } {
+function getRandomPromptHints(): { category: string; continent: string; avoidCountries: string; sunriseHint: SunriseTimezoneHint } {
   const category = LOCATION_CATEGORIES[Math.floor(Math.random() * LOCATION_CATEGORIES.length)]
   const continent = CONTINENTS[Math.floor(Math.random() * CONTINENTS.length)]
 
@@ -90,6 +107,7 @@ const LOCATION_GENERATION_PROMPT = `你是一位资深旅行探险家，专门�
 2. 提供准确的地理信息
 3. 尽量选择有趣、独特、不常见的地点
 4. 避免总是选择最热门的旅游景点
+5. landscapeUrl 请返回可访问的图片直链，优先使用 Pexels 或 Unsplash
 
 请严格按照以下JSON格式输出（不要包含任何其他文字）：
 {
@@ -99,7 +117,7 @@ const LOCATION_GENERATION_PROMPT = `你是一位资深旅行探险家，专门�
   "landmark": "地标英文名",
   "landmarkZh": "地标中文名",
   "timezone": "IANA时区字符串",
-  "landscapeUrl": "https://images.unsplash.com/featured/?地标英文名"
+  "landscapeUrl": "https://images.pexels.com/photos/123456/pexels-photo-123456.jpeg 或 https://images.unsplash.com/..."
 }`
 
 /**
@@ -138,7 +156,7 @@ export async function generateLocationWithLLM(
     const hints = getRandomPromptHints()
     let userPrompt = `请生成一个【${hints.category}】类型的旅游目的地。
 
-🌅 时区要求（重要）：当前 UTC 时间是 ${new Date().getUTCHours()}:${String(new Date().getUTCMinutes()).padStart(2, '0')}，请选择一个正处于日出时段（当地时间约 5:00-7:00）的地点。
+🌅 时区要求（重要）：当前东八区时间是 ${hints.sunriseHint.beijingTime}，请选择一个正处于日出时段（当地时间约 5:00-7:00）的地点。
 符合条件的时区范围大约是 ${hints.sunriseHint.utcOffsetRange}，对应地区包括：${hints.sunriseHint.regionHint}。
 
 如果上述地区没有合适的【${hints.category}】类型目的地，可以适当放宽到邻近时区，但优先选择正在迎接日出的地方。
@@ -151,7 +169,13 @@ export async function generateLocationWithLLM(
 
     userPrompt += `\n\n直接输出JSON，不要有任何其他文字。`
 
-    if (config.debug) ctx.logger('pig').debug(`Location prompt hints: sunrise=${hints.sunriseHint.regionHint}, category=${hints.category}`)
+    if (config.debug) {
+      ctx.logger('pig').debug(
+        `Location prompt hints: bj=${hints.sunriseHint.beijingTime}, ` +
+        `ideal=${hints.sunriseHint.idealOffset}, range=${hints.sunriseHint.utcOffsetRange}, ` +
+        `region=${hints.sunriseHint.regionHint}, category=${hints.category}`
+      )
+    }
 
     const messages = [
       new SystemMessage(LOCATION_GENERATION_PROMPT),

@@ -2,7 +2,7 @@ import { Context } from 'koishi'
 import { promises as fs } from 'fs'
 import { resolve } from 'path'
 import { Config } from '../config'
-import { getCountryISOCode, getPrimaryCountryNameEn, getPrimaryCountryNameZh } from '../utils/countryMapping'
+import { getCountryAliasNamesEn, getCountryISOCode, getPrimaryCountryNameEn, getPrimaryCountryNameZh } from '../utils/countryMapping'
 
 export interface VisitedCountry {
   isoCode: string
@@ -29,24 +29,44 @@ export interface WorldMapData {
 }
 
 const TOTAL_COUNTRY_COUNT = 195
-const MAP_CACHE_RELATIVE_PATH = ['data', 'pig', 'svgs', 'world-map.svg']
+const WORLD_MAP_FILENAME = 'world-map.svg'
+const DATA_MAP_RELATIVE_PATH = ['data', 'pig', 'svgs', WORLD_MAP_FILENAME] as const
+const PACKAGE_MAP_RELATIVE_PATH = ['pig_svgs', WORLD_MAP_FILENAME] as const
 
 let cachedWorldMapSvg: string | null = null
+
+function getWorldMapPathCandidates(ctx: Context): string[] {
+  const baseDir = ctx.baseDir ?? process.cwd()
+  const cwd = process.cwd()
+  return Array.from(new Set([
+    resolve(__dirname, '..', '..', ...PACKAGE_MAP_RELATIVE_PATH),
+    resolve(cwd, ...PACKAGE_MAP_RELATIVE_PATH),
+    resolve(baseDir, ...DATA_MAP_RELATIVE_PATH),
+    resolve(cwd, ...DATA_MAP_RELATIVE_PATH),
+    resolve(cwd, '..', ...DATA_MAP_RELATIVE_PATH),
+    resolve(cwd, '..', '..', ...DATA_MAP_RELATIVE_PATH),
+  ]))
+}
 
 export async function getWorldMapSvg(ctx: Context): Promise<string> {
   if (cachedWorldMapSvg) return cachedWorldMapSvg
 
-  const mapPath = resolve(ctx.baseDir ?? process.cwd(), ...MAP_CACHE_RELATIVE_PATH)
-  try {
-    const file = await fs.readFile(mapPath, 'utf8')
-    if (!file.includes('<svg')) {
-      throw new Error('Invalid SVG content')
+  const errors: string[] = []
+  for (const mapPath of getWorldMapPathCandidates(ctx)) {
+    try {
+      const file = await fs.readFile(mapPath, 'utf8')
+      if (!file.includes('<svg')) {
+        throw new Error('Invalid SVG content')
+      }
+      ctx.logger('pig').debug(`World map SVG loaded from: ${mapPath}`)
+      cachedWorldMapSvg = file
+      return file
+    } catch (error) {
+      errors.push(`${mapPath} (${error instanceof Error ? error.message : String(error)})`)
     }
-    cachedWorldMapSvg = file
-    return file
-  } catch (error) {
-    throw new Error(`Official world map SVG not found or invalid: ${mapPath}. ${error}`)
   }
+
+  throw new Error(`Official world map SVG not found or invalid. Tried: ${errors.join('; ')}`)
 }
 
 export async function getUserVisitedCountries(
@@ -249,6 +269,10 @@ export function processMapSvg(svgContent: string, visitedCountries: VisitedCount
   for (const country of visitedCountries) {
     const isoCode = country.isoCode.toUpperCase()
     const englishName = country.countryName
+    const englishAliases = Array.from(new Set([
+      englishName,
+      ...getCountryAliasNamesEn(isoCode),
+    ].filter(Boolean)))
     const visitClass = `visited ${getVisitClass(country.visitCount)}`
 
     // Pattern 1: Match by id="XX" (ISO code)
@@ -257,18 +281,28 @@ export function processMapSvg(svgContent: string, visitedCountries: VisitedCount
       return addClassToElement(prefix, suffix, visitClass)
     })
 
+    // Pattern 1.1: Match by data-iso2="XX" (layered GeoJSON SVG format)
+    const dataIso2Regex = new RegExp(`(<[^>]*\\bdata-iso2=["']${isoCode}["'][^>]*)(>)`, 'gi')
+    svg = svg.replace(dataIso2Regex, (match, prefix, suffix) => {
+      return addClassToElement(prefix, suffix, visitClass)
+    })
+
+    // Pattern 1.2: Match by class token "iso2-XX"
+    const isoClassToken = `iso2-${isoCode}`
+    const isoClassRegex = new RegExp(`(<[^>]*\\bclass=["'][^"']*\\b${escapeRegex(isoClassToken)}\\b[^"']*["'][^>]*)(>)`, 'gi')
+    svg = svg.replace(isoClassRegex, (match, prefix, suffix) => {
+      return addClassToElement(prefix, suffix, visitClass)
+    })
+
     // Pattern 2: Match by name="CountryName"
-    if (englishName) {
-      const nameRegex = new RegExp(`(<[^>]*\\bname=["']${escapeRegex(englishName)}["'][^>]*)(>)`, 'gi')
+    for (const alias of englishAliases) {
+      const nameRegex = new RegExp(`(<[^>]*\\bname=["']${escapeRegex(alias)}["'][^>]*)(>)`, 'gi')
       svg = svg.replace(nameRegex, (match, prefix, suffix) => {
         return addClassToElement(prefix, suffix, visitClass)
       })
-    }
 
-    // Pattern 3: Match by class="CountryName" (SimpleMaps SVG format)
-    // This SVG uses class="Norway" instead of id="NO"
-    if (englishName) {
-      const classNameRegex = new RegExp(`(<[^>]*\\bclass=["']${escapeRegex(englishName)}["'][^>]*)(>)`, 'gi')
+      // Pattern 3: Match by class="CountryName" (SimpleMaps SVG format)
+      const classNameRegex = new RegExp(`(<[^>]*\\bclass=["']${escapeRegex(alias)}["'][^>]*)(>)`, 'gi')
       svg = svg.replace(classNameRegex, (match, prefix, suffix) => {
         // Replace the existing class with merged class
         const existingClassRegex = /\bclass=["']([^"']*)["']/
@@ -302,7 +336,7 @@ function escapeRegex(str: string): string {
 }
 
 function hasCountrySelectablePaths(svgContent: string): boolean {
-  return /<path\b[^>]*\b(id|name|class)=["'][^"']+["']/i.test(svgContent)
+  return /<path\b[^>]*\b(id|name|class|data-iso2)=["'][^"']+["']/i.test(svgContent)
 }
 
 function buildTiandituStaticImageUrl(config: Config): string {
@@ -327,7 +361,7 @@ export async function generateWorldMapCard(
 ): Promise<{ buffer: Buffer; filename: string }> {
   const svg = await getWorldMapSvg(ctx)
   const svgSupportsHighlight = hasCountrySelectablePaths(svg)
-  const highlightEnabled = !config.worldMapOfficialOnly && svgSupportsHighlight
+  const highlightEnabled = svgSupportsHighlight && !config.worldMapOfficialOnly
   const processedSvg = highlightEnabled ? processMapSvg(svg, data.visitedCountries) : svg
   const tiandituMapUrl = buildTiandituStaticImageUrl(config)
 
@@ -376,7 +410,7 @@ export async function generateWorldMapCard(
   const mapModeClass = highlightEnabled ? 'highlight-mode' : 'official-mode'
   const tiandituTimeoutMs = Math.max(1000, config.tiandituTimeoutMs || 5000)
   const mapNoteText = highlightEnabled
-    ? 'Projection: Mercator · Country fill enabled'
+    ? 'Projection: Natural Earth · Country fill enabled'
     : 'Base: Official SVG · Country fill disabled'
   const mapSourceText = tiandituMapUrl
     ? 'Tianditu: browser mode (auto fallback)'
@@ -697,6 +731,7 @@ export async function generateWorldMapCard(
     .map-svg-layer {
       position: relative;
       z-index: 1;
+      overflow: hidden;
     }
 
     .map-wrapper.official-mode .map-svg-layer {
@@ -708,9 +743,11 @@ export async function generateWorldMapCard(
     }
 
     .map-wrapper svg {
-      width: 100%;
+      width: 112%;
+      max-width: none;
       height: auto;
       display: block;
+      margin: -2.5% -6% -4% -6%;
     }
 
     .map-wrapper.highlight-mode path {
